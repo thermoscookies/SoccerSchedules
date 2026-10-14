@@ -179,16 +179,30 @@ class ScrapeService:
         result = await self.db.execute(
             select(Division).where(Division.event_id == event.id)
         )
-        existing_divisions = {div.name: div for div in result.scalars().all()}
+        existing_division_list = result.scalars().all()
+        # GotSport group IDs are stable even when a source changes the display name.
+        # Keep the name lookup for legacy divisions that predate a group ID.
+        existing_by_name = {div.name: div for div in existing_division_list}
+        existing_by_group_id = {
+            div.gotsport_division_id: div
+            for div in existing_division_list
+            if div.gotsport_division_id
+        }
         
         for div_data in divisions_data:
             div_name = div_data.get('name')
             if not div_name:
                 continue
-            
-            if div_name in existing_divisions:
+
+            group_id = div_data.get('gotsport_division_id')
+            division = (
+                existing_by_group_id.get(group_id) if group_id else None
+            ) or existing_by_name.get(div_name)
+
+            if division:
                 # Update existing division
-                division = existing_divisions[div_name]
+                if division.name != div_name:
+                    division.name = div_name
                 if div_data.get('age_group'):
                     division.age_group = div_data['age_group']
                 if div_data.get('gender'):
@@ -206,6 +220,9 @@ class ScrapeService:
                     gotsport_division_id=div_data.get('gotsport_division_id'),
                 )
                 self.db.add(division)
+                existing_by_name[div_name] = division
+                if group_id:
+                    existing_by_group_id[group_id] = division
             
             divisions_map[div_name] = division
         
@@ -316,13 +333,49 @@ class ScrapeService:
         
         logger.info(f"Processed {stats['total']} games: {stats['created']} created, {stats['updated']} updated, {stats['skipped']} skipped")
         return stats
-    
+
+    async def _store_teams(self, divisions_map: Dict[str, Division], games_data: List[Dict]) -> Dict[tuple, Team]:
+        """Create/update teams without deleting teams absent from an import."""
+        division_ids = [division.id for division in divisions_map.values()]
+        if not division_ids:
+            return {}
+        result = await self.db.execute(select(Team).where(Team.division_id.in_(division_ids)))
+        by_key = {(team.division_id, team.name): team for team in result.scalars().all()}
+        for game_data in games_data:
+            division = divisions_map.get(game_data.get("division_name"))
+            if not division:
+                continue
+            for side in ("home", "away"):
+                name = game_data.get(f"{side}_team_name")
+                if not name:
+                    continue
+                key = (division.id, name)
+                team = by_key.get(key)
+                if not team:
+                    team = Team(division_id=division.id, name=name)
+                    self.db.add(team)
+                    by_key[key] = team
+        await self.db.flush()
+        for game_data in games_data:
+            division = divisions_map.get(game_data.get("division_name"))
+            if not division:
+                continue
+            for side in ("home", "away"):
+                name = game_data.get(f"{side}_team_name")
+                team = by_key.get((division.id, name)) if name else None
+                if team:
+                    game_data[f"{side}_team_id"] = team.id
+        await self.db.commit()
+        return by_key
+
     def _create_game_from_data(self, division_id: int, game_data: Dict) -> Game:
         """Create a new Game object from scraped data"""
         return Game(
             division_id=division_id,
             gotsport_game_id=game_data.get('gotsport_game_id'),
             game_number=game_data.get('game_number'),
+            home_team_id=game_data.get('home_team_id'),
+            away_team_id=game_data.get('away_team_id'),
             home_team_name=game_data.get('home_team_name'),
             away_team_name=game_data.get('away_team_name'),
             game_date=game_data.get('game_date'),
@@ -342,6 +395,10 @@ class ScrapeService:
             game.home_team_name = game_data['home_team_name']
         if game_data.get('away_team_name'):
             game.away_team_name = game_data['away_team_name']
+        if game_data.get('home_team_id'):
+            game.home_team_id = game_data['home_team_id']
+        if game_data.get('away_team_id'):
+            game.away_team_id = game_data['away_team_id']
         if game_data.get('game_date'):
             game.game_date = game_data['game_date']
         if game_data.get('game_time'):

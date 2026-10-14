@@ -24,13 +24,17 @@ async def lifespan(app: FastAPI):
     """Application lifespan events"""
     # Startup
     print("🚀 Starting Soccer Schedules API...")
-    await start_scheduler()
-    print("✅ Scheduler started")
+    if settings.SCHEDULER_ENABLED and settings.SCRAPING_ENABLED:
+        await start_scheduler()
+        print("✅ Scheduler started")
+    else:
+        print("⚠️ Scheduler disabled")
     yield
     # Shutdown
     print("👋 Shutting down Soccer Schedules API...")
-    stop_scheduler()
-    print("✅ Scheduler stopped")
+    if settings.SCHEDULER_ENABLED and settings.SCRAPING_ENABLED:
+        stop_scheduler()
+        print("✅ Scheduler stopped")
 
 
 app = FastAPI(

@@ -17,11 +17,15 @@ class EventBase(BaseModel):
     end_date: Optional[datetime] = Field(None, description="Event end date")
     url: str = Field(..., description="Event URL")
     status: str = Field(default="active", description="Event status")
+    provider: str = Field(default="gotsport", description="Data provider")
+    source_url: Optional[str] = Field(None, description="Canonical provider source URL")
+    last_imported_at: Optional[datetime] = None
 
 
 class EventCreate(EventBase):
     """Schema for creating an event"""
-    pass
+    gotsport_group_id: Optional[str] = Field(None, description="Optional GotSport group ID to track directly")
+    group_url: Optional[str] = Field(None, description="Optional GotSport schedule or results URL for one group")
 
 
 class EventUpdate(BaseModel):
@@ -31,6 +35,8 @@ class EventUpdate(BaseModel):
     start_date: Optional[datetime] = None
     end_date: Optional[datetime] = None
     url: Optional[str] = None
+    gotsport_group_id: Optional[str] = Field(None, description="Optional GotSport group ID to track directly")
+    group_url: Optional[str] = Field(None, description="Optional GotSport schedule or results URL for one group")
     status: Optional[str] = None
 
 
@@ -171,6 +177,7 @@ class GameDetailResponse(GameResponse):
     """Detailed game response with related data"""
     division_name: Optional[str] = None
     event_name: Optional[str] = None
+    event_id: Optional[int] = None
 
 
 # ============================================================================
@@ -288,6 +295,7 @@ class ScheduleResponse(BaseModel):
     divisions: List[DivisionResponse]
     games: List[GameDetailResponse]
     total_games: int
+    events: Optional[List[EventResponse]] = None
 
 
 # ============================================================================

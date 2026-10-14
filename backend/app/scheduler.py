@@ -12,6 +12,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from app.core.config import settings
 from app.core.database import engine
 from app.models.models import Event
+from app.scraper.gotsport import GotsportCaptchaError
 from app.services.scrape_service import ScrapeService
 
 logger = logging.getLogger(__name__)
@@ -53,6 +54,7 @@ class SmartScheduler:
         self.scheduler = AsyncIOScheduler()
         self.session_maker = async_sessionmaker(engine, expire_on_commit=False)
         self.scheduled_jobs: Dict[int, str] = {}  # event_id -> job_id mapping
+        self.captcha_cooldown_until: Optional[datetime] = None
     
     async def start(self):
         """Start the scheduler"""
@@ -78,6 +80,10 @@ class SmartScheduler:
     async def _check_and_scrape_events(self):
         """Check all active events and scrape if needed"""
         logger.info("Checking events for scraping...")
+
+        if self._captcha_cooldown_active():
+            logger.warning("Skipping automatic GotSport checks during CAPTCHA cooldown")
+            return
         
         async with self.session_maker() as session:
             # Get all active events
@@ -89,6 +95,9 @@ class SmartScheduler:
             logger.info(f"Found {len(events)} active events to check")
             
             for event in events:
+                if self._captcha_cooldown_active():
+                    logger.warning("Stopping automatic event checks during CAPTCHA cooldown")
+                    break
                 try:
                     should_scrape = await self._should_scrape_event(event)
                     
@@ -101,6 +110,21 @@ class SmartScheduler:
                         
                 except Exception as e:
                     logger.error(f"Error checking event {event.id}: {e}", exc_info=True)
+
+    def _captcha_cooldown_active(self) -> bool:
+        return bool(
+            self.captcha_cooldown_until
+            and datetime.now(timezone.utc) < self.captcha_cooldown_until
+        )
+
+    def _record_captcha_failure(self) -> None:
+        self.captcha_cooldown_until = datetime.now(timezone.utc) + timedelta(
+            minutes=settings.CAPTCHA_COOLDOWN_MINUTES
+        )
+        logger.warning(
+            "GotSport CAPTCHA cooldown set for %s",
+            self.captcha_cooldown_until.isoformat(),
+        )
     
     async def _should_scrape_event(self, event: Event) -> bool:
         """Determine if an event should be scraped now"""
@@ -197,16 +221,25 @@ class SmartScheduler:
     
     async def _scrape_event(self, event_id: int, event_url: str):
         """Scrape a single event"""
+        if self._captcha_cooldown_active():
+            logger.warning("Skipping event %s during CAPTCHA cooldown", event_id)
+            return
         async with self.session_maker() as session:
             try:
                 scrape_service = ScrapeService(session)
                 await scrape_service.scrape_and_store_event(event_url, force=False)
                 logger.info(f"Successfully scraped event {event_id}")
+            except GotsportCaptchaError as e:
+                self._record_captcha_failure()
+                logger.error(f"Error scraping event {event_id}: {e}")
             except Exception as e:
                 logger.error(f"Error scraping event {event_id}: {e}", exc_info=True)
     
     async def trigger_manual_scrape(self, event_id: int, force: bool = False) -> bool:
         """Manually trigger a scrape for a specific event"""
+        if self._captcha_cooldown_active():
+            logger.warning("Skipping manual event %s during CAPTCHA cooldown", event_id)
+            return False
         async with self.session_maker() as session:
             result = await session.execute(
                 select(Event).where(Event.id == event_id)
@@ -222,6 +255,10 @@ class SmartScheduler:
                 await scrape_service.scrape_and_store_event(event.url, force=force)
                 logger.info(f"Manual scrape completed for event {event_id}")
                 return True
+            except GotsportCaptchaError as e:
+                self._record_captcha_failure()
+                logger.error(f"Error in manual scrape for event {event_id}: {e}")
+                return False
             except Exception as e:
                 logger.error(f"Error in manual scrape for event {event_id}: {e}", exc_info=True)
                 return False
@@ -236,7 +273,8 @@ async def get_scheduler() -> SmartScheduler:
     global scheduler_instance
     if scheduler_instance is None:
         scheduler_instance = SmartScheduler()
-        await scheduler_instance.start()
+        if settings.SCHEDULER_ENABLED and settings.SCRAPING_ENABLED:
+            await scheduler_instance.start()
     return scheduler_instance
 
 

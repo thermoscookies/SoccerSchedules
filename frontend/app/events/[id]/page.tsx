@@ -3,17 +3,25 @@
 import { useQuery } from '@tanstack/react-query';
 import { schedulesApi, eventsApi, Game } from '@/lib/api';
 import { useState, use, useEffect, useMemo } from 'react';
+import { useSearchParams, useRouter } from 'next/navigation';
 import AdminModal from '@/components/AdminModal';
 
 type FilterType = 'all' | 'division' | 'team' | 'location' | 'favorites' | 'current' | 'myclub';
+type StatusFilter = 'all' | 'upcoming' | 'completed';
 
 export default function EventPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = use(params);
   const eventId = parseInt(id);
+  const searchParams = useSearchParams();
+  const router = useRouter();
+  const combinedView = searchParams.get('events') === 'all';
   const [selectedDivision, setSelectedDivision] = useState<number | undefined>();
   const [teamFilter, setTeamFilter] = useState('');
   const [locationFilter, setLocationFilter] = useState('');
   const [filterType, setFilterType] = useState<FilterType>('all');
+  const [statusFilter, setStatusFilter] = useState<StatusFilter>('all');
+  const [selectedEventIds, setSelectedEventIds] = useState<number[]>([]);
+  const [eventSelectionInitialized, setEventSelectionInitialized] = useState(false);
   const [showFilterMenu, setShowFilterMenu] = useState(false);
   const [favoriteTeams, setFavoriteTeams] = useState<string[]>([]);
   const [showFavoritesModal, setShowFavoritesModal] = useState(false);
@@ -30,6 +38,13 @@ export default function EventPage({ params }: { params: Promise<{ id: string }> 
       return response.data;
     },
   });
+
+  useEffect(() => {
+    if (combinedView && allEvents?.length && !eventSelectionInitialized) {
+      setSelectedEventIds(allEvents.filter(event => event.status === 'active').map(event => event.id));
+      setEventSelectionInitialized(true);
+    }
+  }, [combinedView, allEvents, eventSelectionInitialized]);
 
   // Load favorite teams and club name from localStorage on mount
   useEffect(() => {
@@ -91,17 +106,11 @@ export default function EventPage({ params }: { params: Promise<{ id: string }> 
   };
 
   const { data: schedule, isLoading, error } = useQuery({
-    queryKey: ['schedule', eventId, selectedDivision, teamFilter, locationFilter, filterType === 'all' ? currentPage : 1, filterType],
+    queryKey: ['schedule', combinedView ? 'all' : eventId],
     queryFn: async () => {
-      // Only use pagination for 'all' view, fetch all games for filtered views
-      const usePagination = filterType === 'all';
-      const response = await schedulesApi.getEventSchedule(eventId, {
-        division_id: filterType === 'division' && selectedDivision ? selectedDivision : undefined,
-        team_name: filterType === 'team' && teamFilter ? teamFilter : undefined,
-        field_name: filterType === 'location' && locationFilter ? locationFilter : undefined,
-        page: usePagination ? currentPage : undefined,
-        page_size: usePagination ? pageSize : undefined,
-      });
+      const response = combinedView
+        ? await schedulesApi.getAllActive()
+        : await schedulesApi.getEventSchedule(eventId, { page: 1, page_size: 500 });
       return response.data;
     },
   });
@@ -113,7 +122,7 @@ export default function EventPage({ params }: { params: Promise<{ id: string }> 
       const response = await schedulesApi.getTeams(eventId);
       return response.data.teams;
     },
-    enabled: filterType === 'team',
+    enabled: !combinedView && filterType === 'team',
   });
 
   // Fetch locations list from backend
@@ -123,12 +132,16 @@ export default function EventPage({ params }: { params: Promise<{ id: string }> 
       const response = await schedulesApi.getLocations(eventId);
       return response.data.locations;
     },
-    enabled: filterType === 'location',
+    enabled: !combinedView && filterType === 'location',
   });
 
   // PERFORMANCE: Use backend-provided lists instead of computing from all games
-  const allTeams = teamsData || [];
-  const allLocations = locationsData || [];
+  const allTeams = useMemo(() => combinedView
+    ? Array.from(new Set((schedule?.games || []).flatMap(game => [game.home_team_name, game.away_team_name]).filter(Boolean) as string[])).sort()
+    : (teamsData || []), [combinedView, schedule?.games, teamsData]);
+  const allLocations = useMemo(() => combinedView
+    ? Array.from(new Set((schedule?.games || []).map(game => game.field_name).filter(Boolean) as string[])).sort()
+    : (locationsData || []), [combinedView, schedule?.games, locationsData]);
 
   // Helper function to parse time strings like "8:00 AM" to comparable numbers
   const parseTime = (timeStr: string | null) => {
@@ -215,6 +228,12 @@ export default function EventPage({ params }: { params: Promise<{ id: string }> 
     
     return schedule.games
       .filter(game => {
+        if (combinedView && selectedEventIds.length > 0 && game.event_id && !selectedEventIds.includes(game.event_id)) return false;
+        if (selectedDivision && game.division_id !== selectedDivision) return false;
+        if (teamFilter && !(game.home_team_name === teamFilter || game.away_team_name === teamFilter)) return false;
+        if (locationFilter && game.field_name !== locationFilter) return false;
+        if (statusFilter === 'completed' && game.status !== 'completed') return false;
+        if (statusFilter === 'upcoming' && game.status === 'completed') return false;
         if (filterType === 'current') {
           // For current matches, we'll filter separately
           return true;
@@ -244,7 +263,7 @@ export default function EventPage({ params }: { params: Promise<{ id: string }> 
         const timeB = parseTime(b.game_time);
         return timeA - timeB;
       });
-  }, [schedule?.games, filterType, favoriteTeams, myClubName]);
+  }, [schedule?.games, combinedView, selectedEventIds, selectedDivision, teamFilter, locationFilter, statusFilter, filterType, favoriteTeams, myClubName]);
 
   // Apply current matches filter if selected
   const displayGames = filterType === 'current' ? getCurrentMatches(filteredGames) : filteredGames;
@@ -256,7 +275,17 @@ export default function EventPage({ params }: { params: Promise<{ id: string }> 
     setTeamFilter('');
     setLocationFilter('');
     setShowFilterMenu(false);
-    setCurrentPage(1); // Reset to page 1 when changing filters
+    setCurrentPage(1);
+  };
+
+  const resetFilters = () => {
+    setSelectedDivision(undefined);
+    setTeamFilter('');
+    setLocationFilter('');
+    setFilterType('all');
+    setStatusFilter('all');
+    if (combinedView) setSelectedEventIds(allEvents?.filter(event => event.status === 'active').map(event => event.id) || []);
+    setCurrentPage(1);
   };
 
   // Handle clicking on a team name in the table
@@ -347,9 +376,10 @@ export default function EventPage({ params }: { params: Promise<{ id: string }> 
                 <span className="text-xs sm:text-sm font-medium text-gray-700 whitespace-nowrap">Tournament:</span>
                 <select 
                   className="px-2 sm:px-3 py-1.5 border border-gray-300 rounded-md text-xs sm:text-sm bg-white min-w-0 flex-1"
-                  value={eventId}
-                  onChange={(e) => window.location.href = `/events/${e.target.value}`}
+                  value={combinedView ? 'all' : eventId}
+                  onChange={(e) => router.push(e.target.value === 'all' ? `/events/${eventId}?events=all` : `/events/${e.target.value}`)}
                 >
+                  {allEvents && allEvents.length > 1 && <option value="all">All Events</option>}
                   {allEvents && allEvents.length > 0 ? (
                     allEvents.map(event => (
                       <option key={event.id} value={event.id}>{event.name}</option>
@@ -562,6 +592,25 @@ export default function EventPage({ params }: { params: Promise<{ id: string }> 
                 ))}
               </select>
             )}
+            {combinedView && (
+              <div className="flex flex-wrap items-center gap-2 text-sm">
+                <span className="font-medium">Events:</span>
+                {(allEvents || []).filter(event => event.status === 'active').map(event => (
+                  <label key={event.id} className="inline-flex items-center gap-1">
+                    <input type="checkbox" checked={selectedEventIds.includes(event.id)} onChange={() => setSelectedEventIds(current => current.includes(event.id) ? current.filter(id => id !== event.id) : [...current, event.id])} />
+                    {event.name}
+                  </label>
+                ))}
+              </div>
+            )}
+            <label className="text-sm whitespace-nowrap">Results:
+              <select value={statusFilter} onChange={event => setStatusFilter(event.target.value as StatusFilter)} className="ml-2 px-2 py-2 border border-gray-300 rounded-md bg-white">
+                <option value="all">All Games</option>
+                <option value="upcoming">Upcoming</option>
+                <option value="completed">Completed</option>
+              </select>
+            </label>
+            <button onClick={resetFilters} className="px-3 py-2 border border-gray-300 rounded-md text-sm hover:bg-gray-50">Reset Filters</button>
           </div>
         </div>
 
@@ -637,6 +686,9 @@ export default function EventPage({ params }: { params: Promise<{ id: string }> 
                   Division
                 </th>
                 <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                  Event
+                </th>
+                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
                   Status
                 </th>
               </tr>
@@ -644,7 +696,7 @@ export default function EventPage({ params }: { params: Promise<{ id: string }> 
             <tbody className="bg-white divide-y divide-gray-200">
               {displayGames.length === 0 ? (
                 <tr>
-                  <td colSpan={7} className="px-6 py-12 text-center text-gray-500">
+                  <td colSpan={8} className="px-6 py-12 text-center text-gray-500">
                     {filterType === 'current' 
                       ? 'No current matches at this time.'
                       : 'No matches found. Contact an admin to upload schedules.'}
@@ -652,7 +704,7 @@ export default function EventPage({ params }: { params: Promise<{ id: string }> 
                 </tr>
               ) : (
                 displayGames.map((game) => (
-                  <tr key={game.id} className="hover:bg-gray-50">
+                  <tr key={game.id} className={game.status === 'completed' ? 'hover:bg-gray-50' : 'bg-gray-50/50 hover:bg-gray-100'}>
                     <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
                       <div>{game.game_date ? new Date(game.game_date).toLocaleDateString('en-US', { month: 'short', day: 'numeric' }) : ''}</div>
                       <div className="text-gray-600">{game.game_time || 'TBD'}</div>
@@ -668,9 +720,9 @@ export default function EventPage({ params }: { params: Promise<{ id: string }> 
                     </td>
                     <td className="px-6 py-4 whitespace-nowrap text-sm text-center">
                       {game.home_score !== null && game.away_score !== null ? (
-                        <span className="font-semibold">{game.home_score} - {game.away_score}</span>
+                        <span className="font-extrabold text-emerald-700" aria-label="Completed score">{game.home_score} - {game.away_score}</span>
                       ) : (
-                        <span className="text-gray-400">-</span>
+                        <span className="text-gray-500 italic">Scheduled</span>
                       )}
                     </td>
                     <td className="px-6 py-4 text-sm">
@@ -699,6 +751,9 @@ export default function EventPage({ params }: { params: Promise<{ id: string }> 
                       >
                         {game.division_name}
                       </button>
+                    </td>
+                    <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-700">
+                      {game.event_name || schedule.event.name}
                     </td>
                     <td className="px-6 py-4 whitespace-nowrap text-sm">
                       <span className={`px-2 py-1 inline-flex text-xs leading-5 font-semibold rounded-full ${
@@ -778,7 +833,7 @@ export default function EventPage({ params }: { params: Promise<{ id: string }> 
                     >
                       {game.home_team_name || 'TBD'}
                     </button>
-                    <span className="font-bold text-base mx-2">
+                    <span className={`font-extrabold text-base mx-2 ${game.home_score !== null && game.away_score !== null && game.home_score > game.away_score ? 'text-emerald-300' : 'text-gray-100'}`}>
                       {game.home_score !== null ? game.home_score : '-'}
                     </span>
                   </div>
@@ -790,7 +845,7 @@ export default function EventPage({ params }: { params: Promise<{ id: string }> 
                     >
                       {game.away_team_name || 'TBD'}
                     </button>
-                    <span className="font-bold text-base mx-2">
+                    <span className={`font-extrabold text-base mx-2 ${game.home_score !== null && game.away_score !== null && game.away_score > game.home_score ? 'text-emerald-300' : 'text-gray-100'}`}>
                       {game.away_score !== null ? game.away_score : '-'}
                     </span>
                   </div>

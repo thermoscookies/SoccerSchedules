@@ -37,6 +37,9 @@ class Event(Base):
     url: Mapped[str] = mapped_column(String(500), nullable=False)
     status: Mapped[str] = mapped_column(String(50), default="active")
     last_scraped_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True))
+    provider: Mapped[str] = mapped_column(String(50), default="gotsport", nullable=False)
+    source_url: Mapped[Optional[str]] = mapped_column(String(500))
+    last_imported_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True))
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=datetime.utcnow
     )
@@ -50,6 +53,9 @@ class Event(Base):
     )
     scrape_logs: Mapped[list["ScrapeLog"]] = relationship(
         "ScrapeLog", back_populates="event", cascade="all, delete-orphan"
+    )
+    browser_imports: Mapped[list["BrowserImport"]] = relationship(
+        "BrowserImport", back_populates="event", cascade="all, delete-orphan"
     )
 
 
@@ -242,3 +248,24 @@ class ScrapeLog(Base):
 
     # Relationships
     event: Mapped["Event"] = relationship("Event", back_populates="scrape_logs")
+
+
+class BrowserImport(Base):
+    """History of explicit, authenticated browser-assisted imports."""
+    __tablename__ = "browser_imports"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
+    event_id: Mapped[int] = mapped_column(
+        Integer, ForeignKey("events.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    provider: Mapped[str] = mapped_column(String(50), nullable=False, default="gotsport")
+    source_url: Mapped[str] = mapped_column(String(500), nullable=False)
+    status: Mapped[str] = mapped_column(String(20), nullable=False)
+    imported_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    games_seen: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    games_created: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    games_updated: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    completed_results: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    error_message: Mapped[Optional[str]] = mapped_column(Text)
+
+    event: Mapped["Event"] = relationship("Event", back_populates="browser_imports")

@@ -1,7 +1,7 @@
 // API client for frontend
 import axios from 'axios';
 
-const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
+const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || '';
 
 export const apiClient = axios.create({
   baseURL: `${API_BASE_URL}/api/v1`,
@@ -27,6 +27,9 @@ export interface Event {
   total_teams?: number;
   total_games?: number;
   next_scrape_in_hours?: number;
+  provider?: string;
+  source_url?: string | null;
+  last_imported_at?: string | null;
 }
 
 export interface Division {
@@ -60,10 +63,12 @@ export interface Game {
   updated_at: string;
   division_name?: string;
   event_name?: string;
+  event_id?: number;
 }
 
 export interface Schedule {
   event: Event;
+  events?: Event[];
   divisions: Division[];
   games: Game[];
   total_games: number;
@@ -95,6 +100,7 @@ export const schedulesApi = {
   
   getLocations: (eventId: number) => 
     apiClient.get<{ locations: string[] }>(`/schedules/${eventId}/locations`),
+  getAllActive: () => apiClient.get<Schedule>('/schedules/all'),
 };
 
 export const scrapingApi = {

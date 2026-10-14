@@ -1,5 +1,5 @@
 """Application configuration using Pydantic settings"""
-from typing import List
+from typing import List, Optional
 from pydantic_settings import BaseSettings, SettingsConfigDict
 from pydantic import field_validator
 
@@ -12,7 +12,7 @@ class Settings(BaseSettings):
     ENVIRONMENT: str = "development"
     
     # Database
-    DATABASE_URL: str = "postgresql+asyncpg://soccer:soccer123@localhost:5432/soccerschedules"
+    DATABASE_URL: str = "postgresql+asyncpg://USER:PASSWORD@localhost:5432/soccerschedules"
     
     @field_validator('DATABASE_URL')
     @classmethod
@@ -44,8 +44,13 @@ class Settings(BaseSettings):
     SCRAPE_TIMEOUT: int = 30  # Request timeout in seconds
     
     # Scheduling
+    SCHEDULER_ENABLED: bool = False
+    SCRAPING_ENABLED: bool = False
     DEFAULT_SCRAPE_INTERVAL_HOURS: int = 24
     TOURNAMENT_SCRAPE_INTERVAL_HOURS: int = 1
+    CAPTCHA_COOLDOWN_MINUTES: int = 60
+    BROWSER_IMPORT_TOKEN: Optional[str] = None
+    BROWSER_IMPORT_MAX_HTML_BYTES: int = 10 * 1024 * 1024
     
     model_config = SettingsConfigDict(
         env_file=".env",

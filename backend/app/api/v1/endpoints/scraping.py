@@ -5,6 +5,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.database import get_db
+from app.core.config import settings
 from app.models.models import Event, ScrapeLog
 from app.schemas.schemas import (
     ScrapeRequest,
@@ -25,6 +26,8 @@ async def trigger_scrape(
     db: AsyncSession = Depends(get_db),
 ):
     """Manually trigger a scrape for an event"""
+    if not settings.SCRAPING_ENABLED:
+        raise HTTPException(status_code=403, detail="Scraping is disabled by server configuration")
     # Verify event exists
     result = await db.execute(
         select(Event).where(Event.id == scrape_request.event_id)

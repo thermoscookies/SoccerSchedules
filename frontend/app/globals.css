@@ -24,3 +24,29 @@ body {
   color: var(--foreground);
   font-family: Arial, Helvetica, sans-serif;
 }
+
+/* SoccerSchedules uses a dark-first homelab presentation. Keep the existing
+   utility-based layout while ensuring legacy light utility classes remain
+   readable in every dialog, filter, and form control. */
+:root {
+  --background: #0b1220;
+  --foreground: #e5e7eb;
+  color-scheme: dark;
+}
+
+body { background: #0b1220; color: #e5e7eb; }
+.bg-white { background-color: #111827 !important; }
+.bg-gray-50 { background-color: #0f172a !important; }
+.bg-gray-100 { background-color: #1f2937 !important; }
+.text-gray-900 { color: #f9fafb !important; }
+.text-gray-700 { color: #d1d5db !important; }
+.text-gray-600, .text-gray-500 { color: #aab4c3 !important; }
+.border-gray-200, .border-gray-300 { border-color: #374151 !important; }
+input, select, textarea {
+  background-color: #111827;
+  color: #f3f4f6;
+  border-color: #4b5563;
+}
+input::placeholder, textarea::placeholder { color: #9ca3af; opacity: 1; }
+button:focus-visible, a:focus-visible, input:focus-visible, select:focus-visible,
+textarea:focus-visible { outline: 3px solid #60a5fa; outline-offset: 2px; }

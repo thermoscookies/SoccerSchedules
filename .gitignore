@@ -31,11 +31,19 @@ venv/
 .env
 .env.local
 .env.*.local
+.env.production
+.env.development
 
 # Database
 *.db
 *.sqlite3
 postgres-data/
+
+# Captured provider pages and local import artifacts
+GotSport.html
+schedule_pdf.pdf
+captured-imports/
+imports/
 
 # IDEs
 .vscode/
@@ -80,3 +88,6 @@ dump.rdb
 
 # Docker
 *.pid
+
+# Homelab-only deployment configuration
+docker-compose.homelab.yml

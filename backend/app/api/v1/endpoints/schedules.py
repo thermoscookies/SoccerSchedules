@@ -86,7 +86,7 @@ async def get_event_locations(
     return {"locations": locations}
 
 
-@router.get("/{event_id}", response_model=ScheduleResponse)
+@router.get("/{event_id:int}", response_model=ScheduleResponse)
 async def get_event_schedule(
     event_id: int,
     division_id: Optional[int] = Query(None, description="Filter by division ID"),
@@ -170,6 +170,7 @@ async def get_event_schedule(
             **game.__dict__,
             division_name=division.name,
             event_name=event.name,
+                event_id=event.id,
         )
         games_response.append(game_detail)
     
@@ -178,6 +179,33 @@ async def get_event_schedule(
         divisions=[DivisionResponse(**div.__dict__) for div in all_divisions],
         games=games_response,
         total_games=total_games or 0,
+    )
+
+
+@router.get("/all", response_model=ScheduleResponse)
+async def get_all_active_schedule(db: AsyncSession = Depends(get_db)):
+    """Return all active-event games for the combined schedule view."""
+    events_result = await db.execute(select(Event).where(Event.status == "active").order_by(Event.name))
+    events = events_result.scalars().all()
+    if not events:
+        raise HTTPException(status_code=404, detail="No active events found")
+    event_ids = [event.id for event in events]
+    divisions_result = await db.execute(select(Division).where(Division.event_id.in_(event_ids)).order_by(Division.name))
+    divisions = divisions_result.scalars().all()
+    query = (select(Game, Division, Event)
+             .select_from(Division)
+             .join(Game, Game.division_id == Division.id)
+             .join(Event, Event.id == Division.event_id)
+             .where(Event.id.in_(event_ids))
+             .order_by(Game.game_date.asc(), Game.game_time.asc()))
+    rows = (await db.execute(query)).all()
+    games = [GameDetailResponse(**game.__dict__, division_name=division.name, event_name=event.name, event_id=event.id) for game, division, event in rows]
+    return ScheduleResponse(
+        event=EventResponse(**events[0].__dict__),
+        events=[EventResponse(**event.__dict__) for event in events],
+        divisions=[DivisionResponse(**division.__dict__) for division in divisions],
+        games=games,
+        total_games=len(games),
     )
 
 

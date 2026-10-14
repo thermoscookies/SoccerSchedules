@@ -31,6 +31,8 @@ export default function AdminModal({ isOpen, onClose, currentEventId }: AdminMod
   const [success, setSuccess] = useState('');
   const [viewingLogsForEvent, setViewingLogsForEvent] = useState<number | null>(null);
   const [clubName, setClubName] = useState('');
+  const [editingEventId, setEditingEventId] = useState<number | null>(null);
+  const [editingEventName, setEditingEventName] = useState('');
   const queryClient = useQueryClient();
 
   // Load club name from localStorage on mount
@@ -127,6 +129,18 @@ export default function AdminModal({ isOpen, onClose, currentEventId }: AdminMod
       setError(error.response?.data?.detail || 'Failed to add event');
       setTimeout(() => setError(''), 5000);
     },
+  });
+
+  const renameEventMutation = useMutation({
+    mutationFn: async ({ id, name }: { id: number; name: string }) => (await eventsApi.update(id, { name })).data,
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['events'] });
+      queryClient.invalidateQueries({ queryKey: ['schedule'] });
+      setEditingEventId(null);
+      setSuccess('Event name saved successfully');
+      setTimeout(() => setSuccess(''), 3000);
+    },
+    onError: (err: any) => setError(err.response?.data?.detail || 'Failed to save event name'),
   });
 
   const handleDeleteEvent = (event: Event) => {
@@ -308,7 +322,12 @@ export default function AdminModal({ isOpen, onClose, currentEventId }: AdminMod
       <div className="bg-white rounded-lg shadow-xl max-w-4xl w-full max-h-[95vh] sm:max-h-[90vh] overflow-hidden flex flex-col">
         {/* Header */}
         <div className="flex items-center justify-between p-3 sm:p-6 border-b border-gray-200">
+        <div className="flex items-center justify-between gap-3">
           <h2 className="text-lg sm:text-2xl font-bold text-gray-900">Admin Panel</h2>
+          <a href="/userscripts/gotsport.user.js" className="text-xs sm:text-sm text-blue-600 hover:underline" target="_blank" rel="noreferrer">
+            Install GotSport Userscript
+          </a>
+        </div>
           <button
             onClick={onClose}
             className="text-gray-400 hover:text-gray-600 transition-colors p-1"
@@ -346,7 +365,7 @@ export default function AdminModal({ isOpen, onClose, currentEventId }: AdminMod
                 value={clubName}
                 onChange={(e) => setClubName(e.target.value)}
                 placeholder="e.g., Reel Stream Media Group"
-                className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent text-sm sm:text-base"
+                className="w-full px-3 py-2 border border-gray-500 rounded-lg bg-gray-900 text-gray-100 placeholder:text-gray-400 focus:ring-2 focus:ring-blue-500 focus:border-transparent text-sm sm:text-base"
               />
               <div className="flex gap-2">
                 <button
@@ -390,7 +409,7 @@ export default function AdminModal({ isOpen, onClose, currentEventId }: AdminMod
                       value={newEventId}
                       onChange={(e) => setNewEventId(e.target.value)}
                       placeholder="e.g., 39474"
-                      className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent text-sm sm:text-base"
+                      className="w-full px-3 py-2 border border-gray-500 rounded-lg bg-gray-900 text-gray-100 placeholder:text-gray-400 focus:ring-2 focus:ring-blue-500 focus:border-transparent text-sm sm:text-base"
                       required
                     />
                     <p className="mt-1 text-xs text-gray-500 break-all">
@@ -407,7 +426,7 @@ export default function AdminModal({ isOpen, onClose, currentEventId }: AdminMod
                       value={newEventName}
                       onChange={(e) => setNewEventName(e.target.value)}
                       placeholder="e.g., 2025 U.S. Futsal Northeast..."
-                      className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent text-sm sm:text-base"
+                      className="w-full px-3 py-2 border border-gray-500 rounded-lg bg-gray-900 text-gray-100 placeholder:text-gray-400 focus:ring-2 focus:ring-blue-500 focus:border-transparent text-sm sm:text-base"
                       required
                     />
                   </div>
@@ -440,11 +459,28 @@ export default function AdminModal({ isOpen, onClose, currentEventId }: AdminMod
                   >
                     <div className="flex flex-col gap-3">
                       <div className="flex-1 min-w-0">
-                        <h4 className="font-semibold text-gray-900 mb-1 text-sm sm:text-base break-words">{event.name}</h4>
+                        {editingEventId === event.id ? (
+                          <div className="flex flex-wrap gap-2 mb-2">
+                            <input aria-label="Event display name" value={editingEventName} onChange={e => setEditingEventName(e.target.value)} className="min-w-[16rem] flex-1 px-3 py-2 rounded border border-gray-500 bg-gray-900 text-gray-100" />
+                            <button onClick={() => renameEventMutation.mutate({ id: event.id, name: editingEventName.trim() })} disabled={!editingEventName.trim() || renameEventMutation.isPending} className="px-3 py-2 rounded bg-blue-600 text-white text-xs">Save</button>
+                            <button onClick={() => setEditingEventId(null)} className="px-3 py-2 rounded bg-gray-600 text-white text-xs">Cancel</button>
+                          </div>
+                        ) : (
+                          <div className="flex items-center gap-2 mb-1">
+                            <h4 className="font-semibold text-gray-900 text-sm sm:text-base break-words">{event.name}</h4>
+                            <button onClick={() => { setEditingEventId(event.id); setEditingEventName(event.name); }} className="text-xs text-blue-600 hover:underline">Rename</button>
+                          </div>
+                        )}
                         <div className="text-xs sm:text-sm text-gray-500 space-y-1">
                           <p>
                             <span className="font-medium">Event ID:</span> {event.gotsport_event_id}
                           </p>
+                          {event.source_url && (
+                            <p className="truncate">
+                              <span className="font-medium">Source:</span>{' '}
+                              <a href={event.source_url} target="_blank" rel="noreferrer" className="text-blue-600 hover:underline">{event.source_url}</a>
+                            </p>
+                          )}
                           {event.total_games !== undefined && (
                             <p>
                               <span className="font-medium">Stats:</span> {event.total_divisions || 0} divisions, {event.total_games} games
@@ -454,6 +490,12 @@ export default function AdminModal({ isOpen, onClose, currentEventId }: AdminMod
                             <p>
                               <span className="font-medium">Last scraped:</span>{' '}
                               {format(new Date(event.last_scraped_at), 'MMM d, yyyy h:mm a')}
+                            </p>
+                          )}
+                          {event.last_imported_at && (
+                            <p>
+                              <span className="font-medium">Last browser import:</span>{' '}
+                              {format(new Date(event.last_imported_at), 'MMM d, yyyy h:mm a')}
                             </p>
                           )}
                           {event.next_scrape_in_hours !== undefined && event.next_scrape_in_hours > 0 && (

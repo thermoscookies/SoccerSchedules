@@ -3,9 +3,9 @@ services:
     image: postgres:15-alpine
     container_name: soccer_postgres
     environment:
-      POSTGRES_USER: ${POSTGRES_USER:-soccer}
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-soccer123}
-      POSTGRES_DB: ${POSTGRES_DB:-soccerschedules}
+      POSTGRES_USER: ${POSTGRES_USER:?set POSTGRES_USER in .env}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}
+      POSTGRES_DB: ${POSTGRES_DB:?set POSTGRES_DB in .env}
     ports:
       - "5432:5432"
     volumes:
@@ -38,9 +38,9 @@ services:
     volumes:
       - ./backend:/app
     ports:
-      - "8000:8000"
+      - "8008:8000"
     environment:
-      DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER:-soccer}:${POSTGRES_PASSWORD:-soccer123}@postgres:5432/${POSTGRES_DB:-soccerschedules}
+      DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER:?set POSTGRES_USER in .env}:${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}@postgres:5432/${POSTGRES_DB:?set POSTGRES_DB in .env}
       REDIS_URL: redis://redis:6379/0
       ENVIRONMENT: development
     depends_on:
@@ -58,7 +58,7 @@ services:
   #   volumes:
   #     - ./backend:/app
   #   environment:
-  #     DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER:-soccer}:${POSTGRES_PASSWORD:-soccer123}@postgres:5432/${POSTGRES_DB:-soccerschedules}
+  #     DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER:?set POSTGRES_USER in .env}:${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}@postgres:5432/${POSTGRES_DB:?set POSTGRES_DB in .env}
   #     REDIS_URL: redis://redis:6379/0
   #     ENVIRONMENT: development
   #   depends_on:
@@ -67,22 +67,22 @@ services:
   #     redis:
   #       condition: service_healthy
 
-  # frontend:
-  #   build:
-  #     context: ./frontend
-  #     dockerfile: Dockerfile
-  #   container_name: soccer_frontend
-  #   command: npm run dev
-  #   volumes:
-  #     - ./frontend:/app
-  #     - /app/node_modules
-  #     - /app/.next
-  #   ports:
-  #     - "3000:3000"
-  #   environment:
-  #     NEXT_PUBLIC_API_URL: http://localhost:8000
-  #   depends_on:
-  #     - backend
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: /home/vince/soccerschedules/Dockerfile
+    container_name: soccer_frontend
+    command: npm run dev
+    volumes:
+      - ./frontend:/app
+      - /app/node_modules
+      - /app/.next
+    ports:
+      - "3000:3000"
+    environment:
+      NEXT_PUBLIC_API_URL: http://localhost:8000
+    depends_on:
+      - backend
 
 volumes:
   postgres_data:

@@ -8,9 +8,11 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from app.core.database import get_db
+from app.core.config import settings
 from app.models.models import Event, Division, Game, BracketStanding
 from app.schemas.schemas import EventResponse, EventCreate, EventUpdate, EventWithStats, SeedingResponse, SeedingTeam
 from app.services.scrape_service import ScrapeService
+from app.scraper.gotsport import build_gotsport_group_url
 from app.scheduler import get_scheduler
 
 router = APIRouter()
@@ -93,15 +95,25 @@ async def create_event(
             detail=f"Event with gotsport_event_id {event.gotsport_event_id} already exists"
         )
     
+    # A direct group source avoids relying on event-wide group discovery.
+    event_data = event.model_dump()
+    group_id = event_data.pop("gotsport_group_id", None)
+    group_url = event_data.pop("group_url", None)
+    if group_url:
+        event_data["url"] = group_url
+    elif group_id:
+        event_data["url"] = build_gotsport_group_url(event.gotsport_event_id, group_id)
+
     # Create event
-    db_event = Event(**event.model_dump())
+    db_event = Event(**event_data)
     db.add(db_event)
     await db.commit()
     await db.refresh(db_event)
     
-    # Trigger initial scrape in the background
-    scheduler = await get_scheduler()
-    asyncio.create_task(scheduler.trigger_manual_scrape(db_event.id, force=True))
+    # Data collection is opt-in for self-hosted deployments.
+    if settings.SCRAPING_ENABLED:
+        scheduler = await get_scheduler()
+        asyncio.create_task(scheduler.trigger_manual_scrape(db_event.id, force=True))
     
     return db_event
 
@@ -165,6 +177,12 @@ async def update_event(
     
     # Update fields
     update_data = event_update.model_dump(exclude_unset=True)
+    group_id = update_data.pop("gotsport_group_id", None)
+    group_url = update_data.pop("group_url", None)
+    if group_url:
+        update_data["url"] = group_url
+    elif group_id:
+        update_data["url"] = build_gotsport_group_url(event.gotsport_event_id, group_id)
     for field, value in update_data.items():
         setattr(event, field, value)
     

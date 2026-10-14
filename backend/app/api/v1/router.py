@@ -1,7 +1,7 @@
 """Main API router combining all endpoint routers"""
 from fastapi import APIRouter
 
-from app.api.v1.endpoints import events, schedules, scraping
+from app.api.v1.endpoints import events, schedules, scraping, browser_import
 
 api_router = APIRouter()
 
@@ -9,6 +9,7 @@ api_router = APIRouter()
 api_router.include_router(events.router, prefix="/events", tags=["events"])
 api_router.include_router(schedules.router, prefix="/schedules", tags=["schedules"])
 api_router.include_router(scraping.router, prefix="/scraping", tags=["scraping"])
+api_router.include_router(browser_import.router, prefix="/browser-imports", tags=["browser-imports"])
 
 
 @api_router.get("/")

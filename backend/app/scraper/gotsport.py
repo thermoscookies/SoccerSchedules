@@ -4,12 +4,11 @@ import json
 import re
 from datetime import datetime
 from typing import Dict, List, Optional, Any
-from urllib.parse import urlparse, parse_qs
+from urllib.parse import urlparse, parse_qs, parse_qsl, urlencode, urlunparse
 from zoneinfo import ZoneInfo
 
-from playwright.async_api import async_playwright, Browser, Page, Response
+from playwright.async_api import async_playwright, Browser, BrowserContext, Page, Response
 from bs4 import BeautifulSoup
-import httpx
 import logging
 
 from app.core.config import settings
@@ -17,11 +16,22 @@ from app.core.config import settings
 logger = logging.getLogger(__name__)
 
 
+class GotsportCaptchaError(RuntimeError):
+    """Raised when GotSport returns its CAPTCHA/interstitial page."""
+
+
+def build_gotsport_group_url(event_id: str, group_id: str) -> str:
+    """Build the canonical GotSport results URL for one event group."""
+    return f"https://system.gotsport.com/org_event/events/{event_id}/results?group={group_id}"
+
+
 class GotsportScraper:
     """Scraper for Gotsport tournament websites"""
     
     def __init__(self):
         self.browser: Optional[Browser] = None
+        self.context: Optional[BrowserContext] = None
+        self._playwright = None
         self.api_responses: Dict[str, Any] = {}
         
     async def __aenter__(self):
@@ -35,14 +45,13 @@ class GotsportScraper:
     
     async def start(self):
         """Start the browser instance"""
-        playwright = await async_playwright().start()
-        # MEMORY OPTIMIZATION: Add flags to reduce memory consumption
-        self.browser = await playwright.chromium.launch(
+        self._playwright = await async_playwright().start()
+        # Resource limits for a headless browser in a small self-hosted deployment.
+        self.browser = await self._playwright.chromium.launch(
             headless=True,
             args=[
                 '--no-sandbox',
                 '--disable-setuid-sandbox',
-                '--disable-blink-features=AutomationControlled',
                 '--disable-dev-shm-usage',
                 '--disable-gpu',
                 '--disable-software-rasterizer',
@@ -55,12 +64,22 @@ class GotsportScraper:
                 '--disable-sync',
             ]
         )
+        # Keep one ordinary browser context for every page in this scrape.  This
+        # preserves consent/session state without persisting cookies between runs.
+        self.context = await self.browser.new_context()
         logger.info("Playwright browser started with memory optimizations")
     
     async def stop(self):
         """Stop the browser instance"""
+        if self.context:
+            await self.context.close()
+            self.context = None
         if self.browser:
             await self.browser.close()
+            self.browser = None
+        if self._playwright:
+            await self._playwright.stop()
+            self._playwright = None
             logger.info("Playwright browser stopped")
     
     def _extract_event_id_from_url(self, url: str) -> Optional[str]:
@@ -127,6 +146,12 @@ class GotsportScraper:
                 result = await self._attempt_scrape(event_url, event_id)
                 print(f"[SCRAPER] Scrape completed: {len(result.get('schedules', []))} games, {len(result.get('divisions', []))} divisions")
                 return result
+            except GotsportCaptchaError:
+                # Retrying a verification page is both unlikely to help and can make the
+                # source site treat this application more aggressively.  Let persistence
+                # record one failed scrape instead.
+                logger.error("GotSport CAPTCHA/interstitial detected; not retrying")
+                raise
             except Exception as e:
                 if attempt < max_retries - 1:
                     wait_time = (attempt + 1) * 5  # 5, 10, 15 seconds
@@ -143,15 +168,17 @@ class GotsportScraper:
         # Clear previous API responses to free memory
         self.api_responses = {}
         
-        # Create new page with stealth settings
-        page = await self.browser.new_page()
+        # All pages for this scrape share the same browser context.
+        if self.context:
+            page = await self.context.new_page()
+        else:
+            page = await self.browser.new_page()
         
-        # Set realistic user agent and headers
+        # Request normal HTML content.
         await page.set_extra_http_headers({
             'Accept-Language': 'en-US,en;q=0.9',
             'Accept-Encoding': 'gzip, deflate, br',
             'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
-            'Referer': 'https://www.google.com/',
         })
         
         # Set up response interception
@@ -162,11 +189,17 @@ class GotsportScraper:
             
             # Navigate to the event page with longer timeout and domcontentloaded
             # domcontentloaded is faster than networkidle and more reliable
-            await page.goto(
+            navigation = await page.goto(
                 event_url,
                 wait_until='domcontentloaded',
                 timeout=180000  # 180 seconds (3 minutes) - some pages are very slow
             )
+
+            content = await page.content()
+            self._log_navigation(event_url, page.url, navigation, captcha=False)
+            if self._is_captcha_interstitial(page.url, content):
+                self._log_navigation(event_url, page.url, navigation, captcha=True)
+                raise GotsportCaptchaError("GotSport returned a CAPTCHA verification page; no schedule data was imported")
             
             logger.info("Page loaded, waiting for content...")
             
@@ -182,7 +215,11 @@ class GotsportScraper:
             
             # Extract divisions and their schedule URLs from the main event page
             print("[SCRAPER] Extracting divisions from main event page...")
-            divisions_data = await self._extract_divisions_from_event_page(page, event_id, event_url)
+            direct_division = self._direct_group_division(event_url)
+            if direct_division:
+                divisions_data = [direct_division]
+            else:
+                divisions_data = await self._extract_divisions_from_event_page(page, event_id, event_url)
             print(f"[SCRAPER] Found {len(divisions_data)} divisions")
             
             # Extract event name from the page
@@ -298,15 +335,38 @@ class GotsportScraper:
                 if division.get('schedule_url'):
                     print(f"[SCRAPER] Scraping schedule for division: {division['name']}")
                     try:
-                        schedule_games = await self._scrape_division_schedule(page, division['schedule_url'], division)
+                        schedule_response = await page.goto(
+                            division['schedule_url'],
+                            wait_until='domcontentloaded',
+                            timeout=180000,
+                        )
+                        schedule_content = await page.content()
+                        self._log_navigation(
+                            division['schedule_url'], page.url, schedule_response,
+                            captcha=self._is_captcha_interstitial(page.url, schedule_content),
+                        )
+                        if self._is_captcha_interstitial(page.url, schedule_content):
+                            raise GotsportCaptchaError(
+                                "GotSport returned a CAPTCHA verification page for group "
+                                f"{division.get('gotsport_division_id', 'unknown')}; no schedule data was imported"
+                            )
+                        schedule_games = await self._scrape_division_schedule(
+                            page, division['schedule_url'], division, html_content=schedule_content
+                        )
                         print(f"[SCRAPER] Found {len(schedule_games)} games in {division['name']}")
                         all_schedules.extend(schedule_games)
                         
                         # Also scrape bracket standings from the same page
-                        bracket_standings = await self._scrape_bracket_standings(page, division['schedule_url'], division)
+                        bracket_standings = await self._scrape_bracket_standings(
+                            page, division['schedule_url'], division, html_content=schedule_content
+                        )
                         if bracket_standings:
                             print(f"[SCRAPER] Found {len(bracket_standings)} bracket standings in {division['name']}")
                             all_bracket_standings.extend(bracket_standings)
+                    except GotsportCaptchaError:
+                        # A verification page is not an empty division.  Propagate it so
+                        # the service records a failed scrape without advancing the event.
+                        raise
                     except Exception as e:
                         print(f"[SCRAPER] Error scraping division {division['name']}: {e}")
                         logger.warning(f"Error scraping division {division['name']}: {e}")
@@ -329,6 +389,58 @@ class GotsportScraper:
             
         finally:
             await page.close()
+
+    @staticmethod
+    def _is_captcha_interstitial(url: str, content: str) -> bool:
+        """Return whether a GotSport response is a verification/interstitial page."""
+        candidate = f"{url}\n{content}".lower()
+        return "verify_captchas" in candidate or (
+            "captcha" in candidate and "gotsport" in candidate and "verify" in candidate
+        )
+
+    @staticmethod
+    def _log_navigation(requested_url: str, final_url: str, response: Optional[Response], captcha: bool) -> None:
+        """Emit navigation diagnostics without recording cookies or headers."""
+        status = response.status if response else None
+        redirects = []
+        request = response.request if response else None
+        while request and request.redirected_from:
+            request = request.redirected_from
+            redirects.append(request.url)
+        logger.info(
+            "GotSport navigation %s",
+            json.dumps({
+                "requested_url": requested_url,
+                "final_url": final_url,
+                "status": status,
+                "redirects": list(reversed(redirects)),
+                "captcha": captcha,
+            }, sort_keys=True),
+        )
+
+    @staticmethod
+    def _direct_group_division(event_url: str) -> Optional[Dict[str, str]]:
+        """Represent an explicitly configured GotSport group as one division source."""
+        match = re.search(r'[?&]group=(\d+)', event_url)
+        if not match:
+            return None
+        group_id = match.group(1)
+        schedule_url = GotsportScraper._schedule_url_for_group(event_url, group_id)
+        return {
+            'name': f'Group {group_id}',
+            'gotsport_division_id': group_id,
+            'schedule_url': schedule_url,
+        }
+
+    @staticmethod
+    def _schedule_url_for_group(event_url: str, group_id: str) -> str:
+        """Canonicalize a group source to the all-date schedule page."""
+        parsed = urlparse(event_url)
+        schedule_path = parsed.path.replace('/results', '/schedules', 1)
+        query = {'date': 'All', 'group': group_id}
+        query.update({key: value for key, value in parse_qsl(parsed.query, keep_blank_values=True)
+                      if key not in {'date', 'group'}})
+        return urlunparse(parsed._replace(path=schedule_path, query=urlencode(query)))
     
     async def _extract_from_api_responses(self, event_id: str) -> Dict[str, Any]:
         """Extract data from intercepted API responses"""
@@ -596,7 +708,7 @@ class GotsportScraper:
             # Look for schedule URLs in either href or onclick
             url_to_check = href if href else onclick
             
-            if 'schedules' in url_to_check and 'group=' in url_to_check:
+            if ('schedules' in url_to_check or 'results' in url_to_check) and 'group=' in url_to_check:
                 # Extract group ID
                 group_match = re.search(r'group=(\d+)', url_to_check)
                 if group_match:
@@ -613,6 +725,7 @@ class GotsportScraper:
                         schedule_url = f"https://system.gotsport.com{href}"
                     else:
                         schedule_url = f"https://system.gotsport.com/org_event/events/{event_id}/schedules?group={group_id}"
+                    schedule_url = self._schedule_url_for_group(schedule_url, group_id)
                     
                     # Try to find division name from parent structure
                     # Strategy: Find the panel, then look for age in panel-heading, division in panel-body
@@ -713,16 +826,27 @@ class GotsportScraper:
         
         return list(divisions_dict.values())
     
-    async def _scrape_division_schedule(self, page: Page, schedule_url: str, division: Dict) -> List[Dict[str, Any]]:
-        """Scrape games from a division's schedule page using fast HTTP requests"""
+    async def _scrape_division_schedule(
+        self,
+        page: Page,
+        schedule_url: str,
+        division: Dict,
+        html_content: Optional[str] = None,
+    ) -> List[Dict[str, Any]]:
+        """Parse games from HTML already retrieved by the Playwright page."""
         games = []
         
         try:
-            # Use HTTP request instead of Playwright for 10-20x speed improvement
-            async with httpx.AsyncClient(timeout=30.0, follow_redirects=True) as client:
-                response = await client.get(schedule_url)
-                response.raise_for_status()
-                content = response.text
+            content = html_content
+            if content is None and page is not None:
+                content = await page.content()
+            if content is None:
+                raise ValueError(f"No Playwright HTML available for {schedule_url}")
+            if self._is_captcha_interstitial(schedule_url, content):
+                raise GotsportCaptchaError(
+                    "GotSport returned a CAPTCHA verification page for group "
+                    f"{division.get('gotsport_division_id', 'unknown')}; no schedule data was imported"
+                )
             
             soup = BeautifulSoup(content, 'html.parser')
             
@@ -911,7 +1035,13 @@ class GotsportScraper:
         
         return games
     
-    async def _scrape_bracket_standings(self, page: Page, schedule_url: str, division: Dict) -> List[Dict[str, Any]]:
+    async def _scrape_bracket_standings(
+        self,
+        page: Page,
+        schedule_url: str,
+        division: Dict,
+        html_content: Optional[str] = None,
+    ) -> List[Dict[str, Any]]:
         """
         Scrape bracket standings from a division page.
         Looks for standings tables with columns like: Team, MP, W, D, L, GF, GA, GD, PTS
@@ -919,12 +1049,16 @@ class GotsportScraper:
         standings = []
         
         try:
-            # Use HTTP request for consistency and speed (same as _scrape_division_schedule)
-            print(f"[SCRAPER] Fetching bracket standings from: {schedule_url}")
-            async with httpx.AsyncClient(timeout=30.0, follow_redirects=True) as client:
-                response = await client.get(schedule_url)
-                response.raise_for_status()
-                html_content = response.text
+            print(f"[SCRAPER] Parsing bracket standings from: {schedule_url}")
+            if html_content is None and page is not None:
+                html_content = await page.content()
+            if html_content is None:
+                raise ValueError(f"No Playwright HTML available for {schedule_url}")
+            if self._is_captcha_interstitial(schedule_url, html_content):
+                raise GotsportCaptchaError(
+                    "GotSport returned a CAPTCHA verification page for group "
+                    f"{division.get('gotsport_division_id', 'unknown')}; no standings were imported"
+                )
             
             soup = BeautifulSoup(html_content, 'html.parser')
             

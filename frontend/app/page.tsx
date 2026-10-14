@@ -41,8 +41,8 @@ export default function Home() {
     return null;
   }
 
-  if (events && events.length === 1) {
-    window.location.href = `/events/${events[0].id}`;
+  if (events && events.length > 0) {
+    window.location.href = `/events/${events[0].id}?events=all`;
     return null;
   }
 
