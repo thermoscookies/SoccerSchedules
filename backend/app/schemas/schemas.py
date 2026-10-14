@@ -120,6 +120,24 @@ class TeamResponse(TeamBase):
         from_attributes = True
 
 
+class FavoriteTeamCreate(BaseModel):
+    division_id: int
+    team_name: str = Field(..., min_length=1, max_length=255)
+
+
+class FavoriteTeamResponse(BaseModel):
+    id: Optional[int] = None
+    division_id: int
+    event_id: int
+    event_name: str
+    division_name: str
+    team_name: str
+    is_favorite: bool = True
+
+    class Config:
+        from_attributes = True
+
+
 # ============================================================================
 # Game Schemas
 # ============================================================================

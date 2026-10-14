@@ -1,13 +1,16 @@
 'use client';
 
 import { useQuery } from '@tanstack/react-query';
-import { schedulesApi, eventsApi, Game } from '@/lib/api';
+import { schedulesApi, eventsApi, favoritesApi, Game } from '@/lib/api';
 import { useState, use, useEffect, useMemo } from 'react';
+import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { useSearchParams, useRouter } from 'next/navigation';
 import AdminModal from '@/components/AdminModal';
 
 type FilterType = 'all' | 'division' | 'team' | 'location' | 'favorites' | 'current' | 'myclub';
 type StatusFilter = 'all' | 'upcoming' | 'completed';
+
+const favoriteKey = (divisionId: number, teamName: string) => `${divisionId}:${teamName.trim().toLocaleLowerCase()}`;
 
 export default function EventPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = use(params);
@@ -23,11 +26,11 @@ export default function EventPage({ params }: { params: Promise<{ id: string }> 
   const [selectedEventIds, setSelectedEventIds] = useState<number[]>([]);
   const [eventSelectionInitialized, setEventSelectionInitialized] = useState(false);
   const [showFilterMenu, setShowFilterMenu] = useState(false);
-  const [favoriteTeams, setFavoriteTeams] = useState<string[]>([]);
   const [showFavoritesModal, setShowFavoritesModal] = useState(false);
   const [showAdminModal, setShowAdminModal] = useState(false);
   const [myClubName, setMyClubName] = useState('');
   const [currentPage, setCurrentPage] = useState(1);
+  const queryClient = useQueryClient();
   const pageSize = 100;
 
   // Fetch all events for the dropdown
@@ -46,12 +49,36 @@ export default function EventPage({ params }: { params: Promise<{ id: string }> 
     }
   }, [combinedView, allEvents, eventSelectionInitialized]);
 
-  // Load favorite teams and club name from localStorage on mount
+  const { data: favoriteOptions = [] } = useQuery({
+    queryKey: ['favorites'],
+    queryFn: async () => (await favoritesApi.list()).data,
+  });
+  const [favoriteOverrides, setFavoriteOverrides] = useState<Record<string, boolean>>({});
+  const favoriteMutation = useMutation({
+    mutationFn: async (input: { divisionId: number; teamName: string; favorite: boolean; favoriteId: number | null }) => {
+      if (input.favorite && input.favoriteId == null) return (await favoritesApi.add(input.divisionId, input.teamName)).data;
+      if (!input.favorite && input.favoriteId != null) return (await favoritesApi.remove(input.favoriteId)).data;
+      return null;
+    },
+    onMutate: (input) => setFavoriteOverrides(current => ({ ...current, [favoriteKey(input.divisionId, input.teamName)]: input.favorite })),
+    onSettled: () => queryClient.invalidateQueries({ queryKey: ['favorites'] }),
+  });
+
+  const favoriteKeys = useMemo(() => {
+    const keys = new Set(favoriteOptions.filter(item => item.is_favorite).map(item => favoriteKey(item.division_id, item.team_name)));
+    Object.entries(favoriteOverrides).forEach(([key, value]) => value ? keys.add(key) : keys.delete(key));
+    return keys;
+  }, [favoriteOptions, favoriteOverrides]);
+  const favoriteTeams = useMemo(() => favoriteOptions.filter(item => item.is_favorite).map(item => item.team_name), [favoriteOptions]);
+
+  const toggleFavorite = (divisionId: number, teamName: string) => {
+    const key = favoriteKey(divisionId, teamName);
+    const existing = favoriteOptions.find(item => item.division_id === divisionId && favoriteKey(item.division_id, item.team_name) === key && item.is_favorite);
+    favoriteMutation.mutate({ divisionId, teamName, favorite: !favoriteKeys.has(key), favoriteId: existing?.id ?? null });
+  };
+
+  // Load club name from localStorage on mount
   useEffect(() => {
-    const stored = localStorage.getItem('favoriteTeams');
-    if (stored) {
-      setFavoriteTeams(JSON.parse(stored));
-    }
     const storedClubName = localStorage.getItem('myClubName');
     if (storedClubName) {
       setMyClubName(storedClubName);
@@ -73,36 +100,9 @@ export default function EventPage({ params }: { params: Promise<{ id: string }> 
     };
   }, []);
 
-  // Save favorite teams to localStorage whenever it changes
-  useEffect(() => {
-    if (favoriteTeams.length > 0) {
-      localStorage.setItem('favoriteTeams', JSON.stringify(favoriteTeams));
-    }
-  }, [favoriteTeams]);
-
-  const toggleFavoriteTeam = (teamName: string) => {
-    setFavoriteTeams(prev => {
-      if (prev.includes(teamName)) {
-        const updated = prev.filter(t => t !== teamName);
-        localStorage.setItem('favoriteTeams', JSON.stringify(updated));
-        return updated;
-      } else {
-        const updated = [...prev, teamName];
-        localStorage.setItem('favoriteTeams', JSON.stringify(updated));
-        return updated;
-      }
-    });
-  };
-
   const removeFavoriteTeam = (teamName: string) => {
-    const updated = favoriteTeams.filter(t => t !== teamName);
-    setFavoriteTeams(updated);
-    localStorage.setItem('favoriteTeams', JSON.stringify(updated));
-  };
-
-  const clearAllFavorites = () => {
-    setFavoriteTeams([]);
-    localStorage.removeItem('favoriteTeams');
+    const item = favoriteOptions.find(option => option.is_favorite && option.team_name === teamName);
+    if (item?.id != null) toggleFavorite(item.division_id, item.team_name);
   };
 
   const { data: schedule, isLoading, error } = useQuery({
@@ -239,8 +239,8 @@ export default function EventPage({ params }: { params: Promise<{ id: string }> 
           return true;
         }
         if (filterType === 'favorites') {
-          return (game.home_team_name && favoriteTeams.includes(game.home_team_name)) ||
-                 (game.away_team_name && favoriteTeams.includes(game.away_team_name));
+          return (game.home_team_name && favoriteKeys.has(favoriteKey(game.division_id, game.home_team_name))) ||
+                 (game.away_team_name && favoriteKeys.has(favoriteKey(game.division_id, game.away_team_name)));
         }
         if (filterType === 'myclub') {
           if (!myClubName) return false;
@@ -263,7 +263,7 @@ export default function EventPage({ params }: { params: Promise<{ id: string }> 
         const timeB = parseTime(b.game_time);
         return timeA - timeB;
       });
-  }, [schedule?.games, combinedView, selectedEventIds, selectedDivision, teamFilter, locationFilter, statusFilter, filterType, favoriteTeams, myClubName]);
+  }, [schedule?.games, combinedView, selectedEventIds, selectedDivision, teamFilter, locationFilter, statusFilter, filterType, favoriteKeys, myClubName]);
 
   // Apply current matches filter if selected
   const displayGames = filterType === 'current' ? getCurrentMatches(filteredGames) : filteredGames;
@@ -429,7 +429,10 @@ export default function EventPage({ params }: { params: Promise<{ id: string }> 
             <span>Viewing: <span className="font-bold">{getViewingText()}</span></span>
             {filterType === 'team' && teamFilter && (
               <button
-                onClick={() => toggleFavoriteTeam(teamFilter)}
+                onClick={() => {
+                  const game = schedule.games.find(item => item.home_team_name === teamFilter || item.away_team_name === teamFilter);
+                  if (game) toggleFavorite(game.division_id, teamFilter);
+                }}
                 className="p-1 hover:bg-gray-100 rounded transition-colors"
                 title={favoriteTeams.includes(teamFilter) ? 'Remove from favorites' : 'Add to favorites'}
               >
@@ -663,9 +666,9 @@ export default function EventPage({ params }: { params: Promise<{ id: string }> 
         )}
 
         {/* Games Table - Desktop */}
-        <div className="hidden md:block bg-white rounded-lg shadow overflow-hidden">
-          <table className="min-w-full divide-y divide-gray-200">
-            <thead className="bg-gray-50">
+        <div className="hidden md:block schedule-shell rounded-lg shadow overflow-hidden">
+          <table className="schedule-table">
+            <thead>
               <tr>
                 <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
                   Time
@@ -693,76 +696,68 @@ export default function EventPage({ params }: { params: Promise<{ id: string }> 
                 </th>
               </tr>
             </thead>
-            <tbody className="bg-white divide-y divide-gray-200">
+            <tbody>
               {displayGames.length === 0 ? (
                 <tr>
                   <td colSpan={8} className="px-6 py-12 text-center text-gray-500">
                     {filterType === 'current' 
                       ? 'No current matches at this time.'
+                      : filterType === 'favorites' && favoriteKeys.size === 0
+                      ? 'No favorite teams yet. Use the stars or Admin Panel → Favorite Teams to add one.'
                       : 'No matches found. Contact an admin to upload schedules.'}
                   </td>
                 </tr>
               ) : (
                 displayGames.map((game) => (
-                  <tr key={game.id} className={game.status === 'completed' ? 'hover:bg-gray-50' : 'bg-gray-50/50 hover:bg-gray-100'}>
-                    <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
+                  <tr key={game.id} className="schedule-row">
+                    <td className="schedule-cell px-6 py-4 whitespace-nowrap text-sm">
                       <div>{game.game_date ? new Date(game.game_date).toLocaleDateString('en-US', { month: 'short', day: 'numeric' }) : ''}</div>
-                      <div className="text-gray-600">{game.game_time || 'TBD'}</div>
+                      <div className="text-sm text-gray-500">{game.game_time || 'TBD'}</div>
                     </td>
-                    <td className="px-6 py-4 text-sm">
-                      <button
-                        onClick={() => game.home_team_name && handleTeamClick(game.home_team_name)}
-                        className="text-blue-600 hover:text-blue-800 hover:underline text-left"
-                        disabled={!game.home_team_name}
-                      >
-                        {game.home_team_name || 'TBD'}
-                      </button>
+                    <td className="schedule-cell px-6 py-4 text-sm">
+                      <div className="flex items-center gap-1">
+                        <button type="button" aria-pressed={!!game.home_team_name && favoriteKeys.has(favoriteKey(game.division_id, game.home_team_name))} aria-label={game.home_team_name ? `${favoriteKeys.has(favoriteKey(game.division_id, game.home_team_name)) ? 'Remove' : 'Add'} ${game.home_team_name} favorite` : 'Home team unavailable'} title={game.home_team_name ? 'Toggle favorite team' : undefined} disabled={!game.home_team_name} onClick={(event) => { event.stopPropagation(); if (game.home_team_name) toggleFavorite(game.division_id, game.home_team_name); }} className="favorite-star">
+                          <span aria-hidden="true" className="text-lg">{game.home_team_name && favoriteKeys.has(favoriteKey(game.division_id, game.home_team_name)) ? '★' : '☆'}</span>
+                        </button>
+                        <button type="button" onClick={() => game.home_team_name && handleTeamClick(game.home_team_name)} className="schedule-link text-left" disabled={!game.home_team_name}>{game.home_team_name || 'TBD'}</button>
+                      </div>
                     </td>
-                    <td className="px-6 py-4 whitespace-nowrap text-sm text-center">
+                    <td className="schedule-cell px-6 py-4 whitespace-nowrap text-sm text-center">
                       {game.home_score !== null && game.away_score !== null ? (
-                        <span className="font-extrabold text-emerald-700" aria-label="Completed score">{game.home_score} - {game.away_score}</span>
+                        <span className="schedule-score" aria-label="Completed score">{game.home_score} - {game.away_score}</span>
                       ) : (
-                        <span className="text-gray-500 italic">Scheduled</span>
+                        <span className="schedule-scheduled">Scheduled</span>
                       )}
                     </td>
-                    <td className="px-6 py-4 text-sm">
-                      <button
-                        onClick={() => game.away_team_name && handleTeamClick(game.away_team_name)}
-                        className="text-blue-600 hover:text-blue-800 hover:underline text-left"
-                        disabled={!game.away_team_name}
-                      >
-                        {game.away_team_name || 'TBD'}
-                      </button>
+                    <td className="schedule-cell px-6 py-4 text-sm">
+                      <div className="flex items-center gap-1">
+                        <button type="button" aria-pressed={!!game.away_team_name && favoriteKeys.has(favoriteKey(game.division_id, game.away_team_name))} aria-label={game.away_team_name ? `${favoriteKeys.has(favoriteKey(game.division_id, game.away_team_name)) ? 'Remove' : 'Add'} ${game.away_team_name} favorite` : 'Away team unavailable'} title={game.away_team_name ? 'Toggle favorite team' : undefined} disabled={!game.away_team_name} onClick={(event) => { event.stopPropagation(); if (game.away_team_name) toggleFavorite(game.division_id, game.away_team_name); }} className="favorite-star"><span aria-hidden="true" className="text-lg">{game.away_team_name && favoriteKeys.has(favoriteKey(game.division_id, game.away_team_name)) ? '★' : '☆'}</span></button>
+                        <button type="button" onClick={() => game.away_team_name && handleTeamClick(game.away_team_name)} className="schedule-link text-left" disabled={!game.away_team_name}>{game.away_team_name || 'TBD'}</button>
+                      </div>
                     </td>
-                    <td className="px-6 py-4 text-sm">
+                    <td className="schedule-cell px-6 py-4 text-sm">
                       <button
                         onClick={() => game.field_name && handleLocationClick(game.field_name)}
-                        className="text-blue-600 hover:text-blue-800 hover:underline text-left"
+                        className="schedule-link text-left"
                         disabled={!game.field_name}
                       >
                         {game.field_name || 'TBD'}
                       </button>
                     </td>
-                    <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-600">
+                    <td className="schedule-cell px-6 py-4 whitespace-nowrap text-sm">
                       <button
                         onClick={() => game.division_id && handleDivisionClick(game.division_id)}
-                        className="text-blue-600 hover:text-blue-800 hover:underline text-left"
+                        className="schedule-link text-left"
                         disabled={!game.division_id}
                       >
                         {game.division_name}
                       </button>
                     </td>
-                    <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-700">
+                    <td className="schedule-cell px-6 py-4 whitespace-nowrap text-sm">
                       {game.event_name || schedule.event.name}
                     </td>
-                    <td className="px-6 py-4 whitespace-nowrap text-sm">
-                      <span className={`px-2 py-1 inline-flex text-xs leading-5 font-semibold rounded-full ${
-                        game.status === 'completed' 
-                          ? 'bg-green-100 text-green-800' 
-                          : game.status === 'in_progress'
-                          ? 'bg-blue-100 text-blue-800'
-                          : 'bg-gray-100 text-gray-800'
-                      }`}>
+                    <td className="schedule-cell px-6 py-4 whitespace-nowrap text-sm">
+                      <span className={`schedule-status schedule-status--${game.status || 'scheduled'}`}>
                         {game.status || 'scheduled'}
                       </span>
                     </td>
@@ -779,6 +774,8 @@ export default function EventPage({ params }: { params: Promise<{ id: string }> 
             <div className="bg-white rounded-lg shadow p-6 text-center text-gray-500">
               {filterType === 'current' 
                 ? 'No current matches at this time.'
+                : filterType === 'favorites' && favoriteKeys.size === 0
+                ? 'No favorite teams yet. Use the stars or Admin Panel → Favorite Teams to add one.'
                 : 'No matches found. Contact an admin to upload schedules.'}
             </div>
           ) : (
@@ -812,13 +809,7 @@ export default function EventPage({ params }: { params: Promise<{ id: string }> 
                     )}
                   </div>
                   
-                  <span className={`px-2 py-1 text-xs font-semibold rounded-full whitespace-nowrap ${
-                    game.status === 'completed' 
-                      ? 'bg-green-100 text-green-800' 
-                      : game.status === 'in_progress'
-                      ? 'bg-blue-100 text-blue-800'
-                      : 'bg-gray-100 text-gray-800'
-                  }`}>
+                  <span className={`schedule-status schedule-status--${game.status || 'scheduled'} whitespace-nowrap`}>
                     {game.status || 'scheduled'}
                   </span>
                 </div>
@@ -826,26 +817,14 @@ export default function EventPage({ params }: { params: Promise<{ id: string }> 
                 {/* Teams and Score */}
                 <div className="space-y-1 mb-2">
                   <div className="flex items-center justify-between">
-                    <button
-                      onClick={() => game.home_team_name && handleTeamClick(game.home_team_name)}
-                      className="text-blue-600 hover:text-blue-800 text-left font-medium flex-1 text-sm"
-                      disabled={!game.home_team_name}
-                    >
-                      {game.home_team_name || 'TBD'}
-                    </button>
-                    <span className={`font-extrabold text-base mx-2 ${game.home_score !== null && game.away_score !== null && game.home_score > game.away_score ? 'text-emerald-300' : 'text-gray-100'}`}>
+                    <div className="flex items-center flex-1 min-w-0"><button type="button" aria-pressed={!!game.home_team_name && favoriteKeys.has(favoriteKey(game.division_id, game.home_team_name))} aria-label={game.home_team_name ? 'Toggle home team favorite' : 'Home team unavailable'} disabled={!game.home_team_name} onClick={(event) => { event.stopPropagation(); if (game.home_team_name) toggleFavorite(game.division_id, game.home_team_name); }} className="favorite-star mr-1 text-lg">{game.home_team_name && favoriteKeys.has(favoriteKey(game.division_id, game.home_team_name)) ? '★' : '☆'}</button><button type="button" onClick={() => game.home_team_name && handleTeamClick(game.home_team_name)} className="schedule-link text-left font-medium truncate text-sm" disabled={!game.home_team_name}>{game.home_team_name || 'TBD'}</button></div>
+                    <span className={`schedule-score text-base mx-2 ${game.home_score !== null && game.away_score !== null && game.home_score > game.away_score ? 'schedule-score--winner' : ''}`}>
                       {game.home_score !== null ? game.home_score : '-'}
                     </span>
                   </div>
                   <div className="flex items-center justify-between">
-                    <button
-                      onClick={() => game.away_team_name && handleTeamClick(game.away_team_name)}
-                      className="text-blue-600 hover:text-blue-800 text-left font-medium flex-1 text-sm"
-                      disabled={!game.away_team_name}
-                    >
-                      {game.away_team_name || 'TBD'}
-                    </button>
-                    <span className={`font-extrabold text-base mx-2 ${game.home_score !== null && game.away_score !== null && game.away_score > game.home_score ? 'text-emerald-300' : 'text-gray-100'}`}>
+                    <div className="flex items-center flex-1 min-w-0"><button type="button" aria-pressed={!!game.away_team_name && favoriteKeys.has(favoriteKey(game.division_id, game.away_team_name))} aria-label={game.away_team_name ? 'Toggle away team favorite' : 'Away team unavailable'} disabled={!game.away_team_name} onClick={(event) => { event.stopPropagation(); if (game.away_team_name) toggleFavorite(game.division_id, game.away_team_name); }} className="favorite-star mr-1 text-lg">{game.away_team_name && favoriteKeys.has(favoriteKey(game.division_id, game.away_team_name)) ? '★' : '☆'}</button><button type="button" onClick={() => game.away_team_name && handleTeamClick(game.away_team_name)} className="schedule-link text-left font-medium truncate text-sm" disabled={!game.away_team_name}>{game.away_team_name || 'TBD'}</button></div>
+                    <span className={`schedule-score text-base mx-2 ${game.home_score !== null && game.away_score !== null && game.away_score > game.home_score ? 'schedule-score--winner' : ''}`}>
                       {game.away_score !== null ? game.away_score : '-'}
                     </span>
                   </div>

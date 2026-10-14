@@ -43,6 +43,16 @@ export interface Division {
   updated_at: string;
 }
 
+export interface FavoriteTeam {
+  id: number | null;
+  division_id: number;
+  event_id: number;
+  event_name: string;
+  division_name: string;
+  team_name: string;
+  is_favorite: boolean;
+}
+
 export interface Game {
   id: number;
   division_id: number;
@@ -109,4 +119,11 @@ export const scrapingApi = {
   getStatus: () => apiClient.get('/scraping/status'),
   getLogs: (eventId: number, limit: number = 10) =>
     apiClient.get(`/scraping/logs/${eventId}`, { params: { limit } }),
+};
+
+export const favoritesApi = {
+  list: () => apiClient.get<FavoriteTeam[]>('/favorites'),
+  add: (division_id: number, team_name: string) =>
+    apiClient.post<FavoriteTeam>('/favorites', { division_id, team_name }),
+  remove: (id: number) => apiClient.delete(`/favorites/${id}`),
 };

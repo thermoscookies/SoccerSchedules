@@ -123,6 +123,25 @@ class Team(Base):
     )
 
 
+class FavoriteTeam(Base):
+    """A shared favorite identified by its division and canonical team name."""
+    __tablename__ = "favorite_teams"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
+    division_id: Mapped[int] = mapped_column(
+        Integer, ForeignKey("divisions.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    team_name: Mapped[str] = mapped_column(String(255), nullable=False)
+    normalized_name: Mapped[str] = mapped_column(String(255), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=datetime.utcnow)
+
+    division: Mapped["Division"] = relationship("Division")
+
+    __table_args__ = (
+        Index("ix_favorite_teams_division_name", "division_id", "normalized_name", unique=True),
+    )
+
+
 class Game(Base):
     """Game/Match model"""
     __tablename__ = "games"

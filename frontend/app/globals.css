@@ -1,52 +1,84 @@
 @import "tailwindcss";
+/* Explicit source discovery keeps Tailwind v4 utilities in the container build. */
+@source "../**/*.{js,ts,jsx,tsx}";
 
 :root {
-  --background: #ffffff;
-  --foreground: #171717;
+  --background: #0b1120;
+  --surface: #111827;
+  --surface-raised: #172033;
+  --surface-hover: #243047;
+  --border: #334155;
+  --text: #f1f5f9;
+  --text-secondary: #cbd5e1;
+  --text-muted: #94a3b8;
+  --link: #93c5fd;
+  --success: #86efac;
+  --success-surface: #123524;
+  --warning: #fcd34d;
+  --warning-surface: #3b2f0b;
+  --danger: #fca5a5;
+  --danger-surface: #451a1a;
+  --favorite: #fbbf24;
+  --focus: #60a5fa;
+  color-scheme: dark;
 }
 
 @theme inline {
   --color-background: var(--background);
-  --color-foreground: var(--foreground);
+  --color-foreground: var(--text);
   --font-sans: var(--font-geist-sans);
   --font-mono: var(--font-geist-mono);
 }
 
-@media (prefers-color-scheme: dark) {
-  :root {
-    --background: #0a0a0a;
-    --foreground: #ededed;
-  }
-}
+* { box-sizing: border-box; }
+html, body { min-height: 100%; }
+body { margin: 0; background: var(--background); color: var(--text); font-family: Arial, Helvetica, sans-serif; }
 
-body {
-  background: var(--background);
-  color: var(--foreground);
-  font-family: Arial, Helvetica, sans-serif;
-}
+/* One compatibility mapping for legacy utility-based views. */
+.bg-white { background-color: var(--surface); }
+.bg-gray-50 { background-color: var(--surface-raised); }
+.bg-gray-100 { background-color: #1e293b; }
+.bg-green-50, .bg-green-100 { background-color: var(--success-surface); }
+.bg-blue-50, .bg-blue-100 { background-color: #172d4c; }
+.bg-red-50, .bg-red-100 { background-color: var(--danger-surface); }
+.bg-yellow-50, .bg-yellow-100 { background-color: var(--warning-surface); }
+.text-gray-900 { color: var(--text); }
+.text-gray-700, .text-gray-600 { color: var(--text-secondary); }
+.text-gray-500, .text-gray-400 { color: var(--text-muted); }
+.text-green-800, .text-green-700, .text-green-600, .text-green-500 { color: var(--success); }
+.text-blue-800, .text-blue-700, .text-blue-600, .text-blue-500 { color: var(--link); }
+.text-red-800, .text-red-700, .text-red-600, .text-red-500 { color: var(--danger); }
+.text-yellow-800, .text-yellow-700, .text-yellow-600 { color: var(--warning); }
+.border-gray-200, .border-gray-300 { border-color: var(--border); }
+[class~="bg-gray-50/50"] { background-color: var(--surface-raised); }
+[class~="hover:bg-gray-50"]:hover, [class~="hover:bg-gray-100"]:hover { background-color: var(--surface-hover); }
+a, .text-blue-600, .text-blue-500 { color: var(--link); }
+input, select, textarea { background-color: var(--surface); color: var(--text); border-color: var(--border); }
+input::placeholder, textarea::placeholder { color: var(--text-muted); opacity: 1; }
+button:focus-visible, a:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-visible { outline: 3px solid var(--focus); outline-offset: 2px; }
 
-/* SoccerSchedules uses a dark-first homelab presentation. Keep the existing
-   utility-based layout while ensuring legacy light utility classes remain
-   readable in every dialog, filter, and form control. */
-:root {
-  --background: #0b1220;
-  --foreground: #e5e7eb;
-  color-scheme: dark;
-}
-
-body { background: #0b1220; color: #e5e7eb; }
-.bg-white { background-color: #111827 !important; }
-.bg-gray-50 { background-color: #0f172a !important; }
-.bg-gray-100 { background-color: #1f2937 !important; }
-.text-gray-900 { color: #f9fafb !important; }
-.text-gray-700 { color: #d1d5db !important; }
-.text-gray-600, .text-gray-500 { color: #aab4c3 !important; }
-.border-gray-200, .border-gray-300 { border-color: #374151 !important; }
-input, select, textarea {
-  background-color: #111827;
-  color: #f3f4f6;
-  border-color: #4b5563;
-}
-input::placeholder, textarea::placeholder { color: #9ca3af; opacity: 1; }
-button:focus-visible, a:focus-visible, input:focus-visible, select:focus-visible,
-textarea:focus-visible { outline: 3px solid #60a5fa; outline-offset: 2px; }
+/* Semantic schedule states keep row/cell styling deterministic. */
+.schedule-shell { background: var(--surface); border: 1px solid var(--border); }
+.schedule-table { width: 100%; border-collapse: separate; border-spacing: 0; }
+.schedule-table thead { background: #0f172a; }
+.schedule-table th { color: var(--text-muted); border-bottom: 1px solid var(--border); font-size: .7rem; letter-spacing: .08em; font-weight: 700; text-transform: uppercase; }
+.schedule-table td { color: var(--text-secondary); border-bottom: 1px solid rgba(51,65,85,.65); }
+.schedule-row { background: var(--surface) !important; transition: background-color .15s ease; }
+.schedule-row:nth-child(even) { background: var(--surface-raised) !important; }
+.schedule-row:hover, .schedule-row:focus-within { background: var(--surface-hover) !important; }
+.schedule-cell { vertical-align: middle; }
+.schedule-link { color: var(--link) !important; background: transparent; border: 0; padding: 0; font: inherit; font-weight: 500; text-decoration: none; overflow-wrap: anywhere; }
+.schedule-link:hover { color: var(--text) !important; text-decoration: underline; text-underline-offset: 3px; }
+.schedule-score { color: var(--text); font-size: 1rem; font-weight: 800; letter-spacing: .02em; }
+.schedule-score--winner { color: var(--success); }
+.schedule-scheduled { color: var(--warning); font-style: normal; font-weight: 700; }
+.schedule-status { display: inline-flex; align-items: center; border: 1px solid transparent; border-radius: 9999px; padding: .25rem .55rem; font-size: .7rem; font-weight: 700; text-transform: capitalize; }
+.schedule-status--completed { color: var(--success); background: var(--success-surface); border-color: #28633f; }
+.schedule-status--scheduled, .schedule-status--in_progress { color: var(--warning); background: var(--warning-surface); border-color: #785d12; }
+.schedule-status--cancelled, .schedule-status--postponed { color: var(--danger); background: var(--danger-surface); border-color: #7f3030; }
+.favorite-star { color: var(--text-muted); background: transparent; border: 0; padding: 0; font: inherit; line-height: 1; transition: color .15s ease, transform .15s ease; }
+.favorite-star:hover, .favorite-star[aria-pressed="true"] { color: var(--favorite); transform: scale(1.08); }
+.favorite-star:focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; border-radius: .25rem; }
+.favorite-star[aria-pressed="true"] { color: var(--favorite); }
+.dashboard-panel { background: var(--surface); border: 1px solid var(--border); }
+.dashboard-muted { color: var(--text-muted); }

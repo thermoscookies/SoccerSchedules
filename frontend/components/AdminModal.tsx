@@ -2,7 +2,7 @@
 
 import { useState } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { eventsApi, scrapingApi, Event } from '@/lib/api';
+import { eventsApi, scrapingApi, favoritesApi, Event, FavoriteTeam } from '@/lib/api';
 import { format } from 'date-fns';
 
 interface ScrapeLog {
@@ -33,6 +33,7 @@ export default function AdminModal({ isOpen, onClose, currentEventId }: AdminMod
   const [clubName, setClubName] = useState('');
   const [editingEventId, setEditingEventId] = useState<number | null>(null);
   const [editingEventName, setEditingEventName] = useState('');
+  const [favoriteSearch, setFavoriteSearch] = useState('');
   const queryClient = useQueryClient();
 
   // Load club name from localStorage on mount
@@ -61,6 +62,23 @@ export default function AdminModal({ isOpen, onClose, currentEventId }: AdminMod
     },
     enabled: viewingLogsForEvent !== null,
     refetchInterval: viewingLogsForEvent !== null ? 3000 : false, // Refresh every 3s when viewing logs
+  });
+
+  const { data: favoriteOptions = [] } = useQuery({
+    queryKey: ['favorites'],
+    queryFn: async () => (await favoritesApi.list()).data,
+    enabled: isOpen,
+  });
+  const favoriteMutation = useMutation({
+    mutationFn: async (item: FavoriteTeam) => item.is_favorite && item.id != null
+      ? favoritesApi.remove(item.id)
+      : favoritesApi.add(item.division_id, item.team_name),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['favorites'] });
+      setSuccess('Favorite teams updated');
+      setTimeout(() => setSuccess(''), 2500);
+    },
+    onError: (err: any) => setError(err.response?.data?.detail || 'Failed to update favorite team'),
   });
 
   const deleteEventMutation = useMutation({
@@ -384,6 +402,22 @@ export default function AdminModal({ isOpen, onClose, currentEventId }: AdminMod
                   </button>
                 )}
               </div>
+            </div>
+          </div>
+
+          {/* Add Event Section */}
+          <div className="mb-4 sm:mb-6 p-3 sm:p-4 bg-gray-800 rounded-lg border border-gray-600">
+            <h3 className="text-base sm:text-lg font-semibold text-gray-100 mb-2">Favorite Teams</h3>
+            <p className="text-xs sm:text-sm text-gray-300 mb-3">Favorites are shared across all visitors and devices. Teams are scoped to their event and division.</p>
+            <input aria-label="Search favorite teams" value={favoriteSearch} onChange={e => setFavoriteSearch(e.target.value)} placeholder="Search teams, events, or divisions" className="w-full px-3 py-2 mb-3 rounded-lg border border-gray-500 bg-gray-900 text-gray-100 placeholder:text-gray-400" />
+            <div className="max-h-64 overflow-y-auto space-y-2">
+              {favoriteOptions.filter(item => `${item.team_name} ${item.event_name} ${item.division_name}`.toLowerCase().includes(favoriteSearch.toLowerCase())).map(item => (
+                <div key={`${item.division_id}:${item.team_name}`} className="flex items-center justify-between gap-2 rounded border border-gray-700 px-3 py-2">
+                  <div className="min-w-0"><div className="truncate text-sm text-gray-100">{item.team_name}</div><div className="truncate text-xs text-gray-400">{item.event_name} · {item.division_name}</div></div>
+                  <button type="button" onClick={() => favoriteMutation.mutate(item)} disabled={favoriteMutation.isPending} aria-label={`${item.is_favorite ? 'Remove' : 'Add'} ${item.team_name} favorite`} className={`shrink-0 text-xl ${item.is_favorite ? 'text-amber-400' : 'text-gray-400 hover:text-amber-300'}`}>{item.is_favorite ? '★' : '☆'}</button>
+                </div>
+              ))}
+              {favoriteOptions.length === 0 && <div className="text-sm text-gray-400">No imported teams are available yet.</div>}
             </div>
           </div>
 
