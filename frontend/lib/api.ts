@@ -14,6 +14,7 @@ export const apiClient = axios.create({
 export interface Event {
   id: number;
   gotsport_event_id: string;
+  gotsport_group_id?: string | null;
   name: string;
   location: string | null;
   start_date: string | null;
@@ -39,6 +40,7 @@ export interface Division {
   age_group: string | null;
   gender: string | null;
   gotsport_division_id: string | null;
+  display_name: string | null;
   created_at: string;
   updated_at: string;
 }
@@ -91,6 +93,9 @@ export const eventsApi = {
   create: (data: Partial<Event>) => apiClient.post<Event>('/events/', data),
   update: (id: number, data: Partial<Event>) => apiClient.patch<Event>(`/events/${id}`, data),
   delete: (id: number) => apiClient.delete(`/events/${id}`),
+  getDivisions: (id: number) => apiClient.get<Division[]>(`/events/${id}/divisions`),
+  updateDivision: (eventId: number, divisionId: number, data: { display_name: string | null }) =>
+    apiClient.patch<Division>(`/events/${eventId}/divisions/${divisionId}`, data),
 };
 
 export const schedulesApi = {

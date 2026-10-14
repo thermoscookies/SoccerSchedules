@@ -89,6 +89,10 @@ class GotsportScraper:
         if match:
             return match.group(1)
         return None
+
+    def _extract_group_id_from_url(self, url: str) -> Optional[str]:
+        match = re.search(r'[?&]group=(\d+)', url)
+        return match.group(1) if match else None
     
     async def _handle_response(self, response: Response):
         """Intercept and store API responses"""

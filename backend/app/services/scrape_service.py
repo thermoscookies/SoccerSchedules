@@ -1,5 +1,6 @@
 """Service for managing scraping operations and data persistence"""
 import logging
+import re
 from datetime import datetime, timezone
 from typing import Dict, List, Optional, Tuple
 from sqlalchemy import select
@@ -41,7 +42,8 @@ class ScrapeService:
                 raise ValueError(f"Invalid event URL: {event_url}")
             
             # Check if event exists
-            event = await self._get_event_by_gotsport_id(event_id)
+            group_match = re.search(r'[?&]group=(\d+)', event_url)
+            event = await self._get_event_by_gotsport_id(event_id, group_match.group(1) if group_match else None)
             
             if event and not force:
                 # Check when it was last scraped
@@ -128,10 +130,10 @@ class ScrapeService:
         finally:
             await scraper.stop()
     
-    async def _get_event_by_gotsport_id(self, gotsport_event_id: str) -> Optional[Event]:
-        """Get event by Gotsport event ID"""
+    async def _get_event_by_gotsport_id(self, gotsport_event_id: str, gotsport_group_id: Optional[str] = None) -> Optional[Event]:
+        """Get a selectable competition by provider event and group ID."""
         result = await self.db.execute(
-            select(Event).where(Event.gotsport_event_id == gotsport_event_id)
+            select(Event).where(Event.gotsport_event_id == gotsport_event_id, Event.gotsport_group_id == gotsport_group_id)
         )
         return result.scalar_one_or_none()
     
@@ -144,6 +146,7 @@ class ScrapeService:
             # Create new event
             event = Event(
                 gotsport_event_id=gotsport_event_id,
+                gotsport_group_id=GotsportScraper()._extract_group_id_from_url(event_url),
                 name=event_data.get('name', f'Event {gotsport_event_id}'),
                 location=event_data.get('location'),
                 start_date=event_data.get('start_date'),
@@ -156,7 +159,10 @@ class ScrapeService:
             logger.info(f"Created new event: {event.name}")
         else:
             # Update existing event
-            if event_data.get('name'):
+            # Event names are local competition labels once a group is
+            # configured; imports must not replace them with the provider's
+            # event-wide title.
+            if event_data.get('name') and not event.gotsport_group_id:
                 event.name = event_data['name']
             if event_data.get('location'):
                 event.location = event_data['location']
@@ -201,7 +207,7 @@ class ScrapeService:
 
             if division:
                 # Update existing division
-                if division.name != div_name:
+                if division.name != div_name and not division.display_name:
                     division.name = div_name
                 if div_data.get('age_group'):
                     division.age_group = div_data['age_group']

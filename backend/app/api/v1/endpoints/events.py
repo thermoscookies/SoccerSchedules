@@ -10,12 +10,31 @@ from sqlalchemy.orm import selectinload
 from app.core.database import get_db
 from app.core.config import settings
 from app.models.models import Event, Division, Game, BracketStanding
-from app.schemas.schemas import EventResponse, EventCreate, EventUpdate, EventWithStats, SeedingResponse, SeedingTeam
+from app.schemas.schemas import EventResponse, EventCreate, EventUpdate, EventWithStats, DivisionResponse, DivisionUpdate, SeedingResponse, SeedingTeam
 from app.services.scrape_service import ScrapeService
 from app.scraper.gotsport import build_gotsport_group_url
 from app.scheduler import get_scheduler
 
 router = APIRouter()
+
+
+@router.get("/{event_id}/divisions", response_model=List[DivisionResponse])
+async def list_event_divisions(event_id: int, db: AsyncSession = Depends(get_db)):
+    result = await db.execute(select(Division).where(Division.event_id == event_id).order_by(Division.name))
+    return result.scalars().all()
+
+
+@router.patch("/{event_id}/divisions/{division_id}", response_model=DivisionResponse)
+async def update_division_display_name(event_id: int, division_id: int, update: DivisionUpdate, db: AsyncSession = Depends(get_db)):
+    result = await db.execute(select(Division).where(Division.id == division_id, Division.event_id == event_id))
+    division = result.scalar_one_or_none()
+    if not division:
+        raise HTTPException(status_code=404, detail="Division not found")
+    value = update.display_name.strip() if update.display_name else None
+    division.display_name = value or None
+    await db.commit()
+    await db.refresh(division)
+    return division
 logger = logging.getLogger(__name__)
 
 
@@ -84,9 +103,10 @@ async def create_event(
 ):
     """Create a new event (will be scraped automatically)"""
     # Check if event already exists
-    result = await db.execute(
-        select(Event).where(Event.gotsport_event_id == event.gotsport_event_id)
-    )
+    result = await db.execute(select(Event).where(
+        Event.gotsport_event_id == event.gotsport_event_id,
+        Event.gotsport_group_id == event.gotsport_group_id,
+    ))
     existing = result.scalar_one_or_none()
     
     if existing:
@@ -97,7 +117,7 @@ async def create_event(
     
     # A direct group source avoids relying on event-wide group discovery.
     event_data = event.model_dump()
-    group_id = event_data.pop("gotsport_group_id", None)
+    group_id = event_data.get("gotsport_group_id")
     group_url = event_data.pop("group_url", None)
     if group_url:
         event_data["url"] = group_url
@@ -177,7 +197,7 @@ async def update_event(
     
     # Update fields
     update_data = event_update.model_dump(exclude_unset=True)
-    group_id = update_data.pop("gotsport_group_id", None)
+    group_id = update_data.get("gotsport_group_id")
     group_url = update_data.pop("group_url", None)
     if group_url:
         update_data["url"] = group_url
@@ -408,7 +428,7 @@ async def get_division_seeding(
         
         return SeedingResponse(
             division_id=division_id,
-            division_name=division.name,
+            division_name=division.display_name or division.name,
             bracket_winners=winner_responses,
             top_remaining=remaining_responses
         )

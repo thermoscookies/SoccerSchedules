@@ -168,7 +168,7 @@ async def get_event_schedule(
     for game, division in games_with_divisions:
         game_detail = GameDetailResponse(
             **game.__dict__,
-            division_name=division.name,
+            division_name=division.display_name or division.name,
             event_name=event.name,
                 event_id=event.id,
         )
@@ -199,7 +199,7 @@ async def get_all_active_schedule(db: AsyncSession = Depends(get_db)):
              .where(Event.id.in_(event_ids))
              .order_by(Game.game_date.asc(), Game.game_time.asc()))
     rows = (await db.execute(query)).all()
-    games = [GameDetailResponse(**game.__dict__, division_name=division.name, event_name=event.name, event_id=event.id) for game, division, event in rows]
+    games = [GameDetailResponse(**game.__dict__, division_name=division.display_name or division.name, event_name=event.name, event_id=event.id) for game, division, event in rows]
     return ScheduleResponse(
         event=EventResponse(**events[0].__dict__),
         events=[EventResponse(**event.__dict__) for event in events],
@@ -241,7 +241,7 @@ async def get_division_games(
     return [
         GameDetailResponse(
             **game.__dict__,
-            division_name=division.name,
+            division_name=division.display_name or division.name,
             event_name=event.name,
         )
         for game in games

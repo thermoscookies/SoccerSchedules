@@ -46,7 +46,7 @@ async def list_favorites(db: AsyncSession = Depends(get_db)):
                 division_id=division.id,
                 event_id=event.id,
                 event_name=event.name,
-                division_name=division.name,
+                division_name=division.display_name or division.name,
                 team_name=name,
                 is_favorite=favorite is not None,
             ))
@@ -68,12 +68,12 @@ async def add_favorite(payload: FavoriteTeamCreate, db: AsyncSession = Depends(g
         raise HTTPException(status_code=404, detail="Team is not present in this division")
     existing = await db.scalar(select(FavoriteTeam).where(FavoriteTeam.division_id == division.id, FavoriteTeam.normalized_name == normalized))
     if existing:
-        return FavoriteTeamResponse(id=existing.id, division_id=division.id, event_id=event.id, event_name=event.name, division_name=division.name, team_name=existing.team_name)
+        return FavoriteTeamResponse(id=existing.id, division_id=division.id, event_id=event.id, event_name=event.name, division_name=division.display_name or division.name, team_name=existing.team_name)
     favorite = FavoriteTeam(division_id=division.id, team_name=canonical, normalized_name=normalized)
     db.add(favorite)
     await db.commit()
     await db.refresh(favorite)
-    return FavoriteTeamResponse(id=favorite.id, division_id=division.id, event_id=event.id, event_name=event.name, division_name=division.name, team_name=canonical)
+    return FavoriteTeamResponse(id=favorite.id, division_id=division.id, event_id=event.id, event_name=event.name, division_name=division.display_name or division.name, team_name=canonical)
 
 
 @router.delete("/{favorite_id}", status_code=status.HTTP_204_NO_CONTENT)

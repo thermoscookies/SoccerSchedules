@@ -99,12 +99,13 @@ async def import_browser_html(
     if len(numbers) != len(set(numbers)):
         raise HTTPException(status_code=422, detail="HTML contains duplicate game numbers")
 
-    result = await db.execute(select(Event).where(Event.gotsport_event_id == event_id))
+    result = await db.execute(select(Event).where(Event.gotsport_event_id == event_id, Event.gotsport_group_id == group_id))
     event = result.scalar_one_or_none()
     if not event:
         event = Event(
             gotsport_event_id=event_id,
-            name=_event_name(html, event_id),
+            gotsport_group_id=group_id,
+            name=division_data.get("name") or _event_name(html, event_id),
             url=str(payload.source_url),
             source_url=str(payload.source_url),
             provider="gotsport",
@@ -115,6 +116,7 @@ async def import_browser_html(
     elif event.provider != "gotsport":
         raise HTTPException(status_code=409, detail="Event is owned by another provider")
     event.url = str(payload.source_url)
+    event.gotsport_group_id = group_id
     event.source_url = str(payload.source_url)
     event.provider = "gotsport"
 

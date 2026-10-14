@@ -11,6 +11,7 @@ from pydantic import BaseModel, Field, HttpUrl
 class EventBase(BaseModel):
     """Base event schema"""
     gotsport_event_id: str = Field(..., description="Gotsport event ID")
+    gotsport_group_id: Optional[str] = Field(None, description="Optional GotSport group ID for a selectable competition")
     name: str = Field(..., description="Event name")
     location: Optional[str] = Field(None, description="Event location")
     start_date: Optional[datetime] = Field(None, description="Event start date")
@@ -69,11 +70,16 @@ class DivisionBase(BaseModel):
     age_group: Optional[str] = Field(None, description="Age group (e.g., U12)")
     gender: Optional[str] = Field(None, description="Gender (Male/Female/Coed)")
     gotsport_division_id: Optional[str] = Field(None, description="Gotsport division ID")
+    display_name: Optional[str] = Field(None, description="Optional user-facing division label")
 
 
 class DivisionCreate(DivisionBase):
     """Schema for creating a division"""
     event_id: int
+
+
+class DivisionUpdate(BaseModel):
+    display_name: Optional[str] = None
 
 
 class DivisionResponse(DivisionBase):

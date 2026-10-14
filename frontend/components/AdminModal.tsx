@@ -1,8 +1,8 @@
 'use client';
 
 import { useState } from 'react';
-import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { eventsApi, scrapingApi, favoritesApi, Event, FavoriteTeam } from '@/lib/api';
+import { useQuery, useMutation, useQueryClient, useQueries } from '@tanstack/react-query';
+import { eventsApi, scrapingApi, favoritesApi, Event, FavoriteTeam, Division } from '@/lib/api';
 import { format } from 'date-fns';
 
 interface ScrapeLog {
@@ -33,6 +33,8 @@ export default function AdminModal({ isOpen, onClose, currentEventId }: AdminMod
   const [clubName, setClubName] = useState('');
   const [editingEventId, setEditingEventId] = useState<number | null>(null);
   const [editingEventName, setEditingEventName] = useState('');
+  const [editingDivisionId, setEditingDivisionId] = useState<number | null>(null);
+  const [editingDivisionName, setEditingDivisionName] = useState('');
   const [favoriteSearch, setFavoriteSearch] = useState('');
   const queryClient = useQueryClient();
 
@@ -69,6 +71,14 @@ export default function AdminModal({ isOpen, onClose, currentEventId }: AdminMod
     queryFn: async () => (await favoritesApi.list()).data,
     enabled: isOpen,
   });
+  const divisionQueries = useQueries({
+    queries: (events || []).map(event => ({
+      queryKey: ['divisions', event.id],
+      queryFn: async () => (await eventsApi.getDivisions(event.id)).data,
+      enabled: isOpen,
+    })),
+  });
+  const divisions = divisionQueries.flatMap(query => query.data || []);
   const favoriteMutation = useMutation({
     mutationFn: async (item: FavoriteTeam) => item.is_favorite && item.id != null
       ? favoritesApi.remove(item.id)
@@ -159,6 +169,19 @@ export default function AdminModal({ isOpen, onClose, currentEventId }: AdminMod
       setTimeout(() => setSuccess(''), 3000);
     },
     onError: (err: any) => setError(err.response?.data?.detail || 'Failed to save event name'),
+  });
+  const renameDivisionMutation = useMutation({
+    mutationFn: async ({ division, displayName }: { division: Division; displayName: string }) =>
+      (await eventsApi.updateDivision(division.event_id, division.id, { display_name: displayName.trim() || null })).data,
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['divisions'] });
+      queryClient.invalidateQueries({ queryKey: ['schedule'] });
+      queryClient.invalidateQueries({ queryKey: ['favorites'] });
+      setEditingDivisionId(null);
+      setSuccess('Division name saved successfully');
+      setTimeout(() => setSuccess(''), 3000);
+    },
+    onError: (err: any) => setError(err.response?.data?.detail || 'Failed to save division name'),
   });
 
   const handleDeleteEvent = (event: Event) => {
@@ -566,6 +589,31 @@ export default function AdminModal({ isOpen, onClose, currentEventId }: AdminMod
                 ))}
               </div>
             )}
+          </div>
+        </div>
+
+        {/* Division display names */}
+        <div className="mt-6 rounded-lg border border-gray-700 bg-gray-900 p-4">
+          <h3 className="text-base sm:text-lg font-semibold text-gray-100 mb-2">Division Display Names</h3>
+          <p className="text-xs sm:text-sm text-gray-300 mb-3">These labels are local display names. Provider group IDs and imported games are unchanged.</p>
+          <div className="space-y-2">
+            {divisions.map((division) => (
+              <div key={division.id} className="flex flex-wrap items-center gap-2 rounded border border-gray-700 px-3 py-2">
+                <div className="min-w-0 flex-1">
+                  <div className="text-sm text-gray-100 break-words">{division.display_name || division.name}</div>
+                  <div className="text-xs text-gray-400">Group {division.gotsport_division_id || 'not set'}</div>
+                </div>
+                {editingDivisionId === division.id ? (
+                  <>
+                    <input aria-label={`Division display name for ${division.name}`} value={editingDivisionName} onChange={e => setEditingDivisionName(e.target.value)} className="min-w-[14rem] flex-1 px-3 py-2 rounded border border-gray-500 bg-gray-800 text-gray-100" />
+                    <button onClick={() => renameDivisionMutation.mutate({ division, displayName: editingDivisionName })} disabled={renameDivisionMutation.isPending} className="px-3 py-2 rounded bg-blue-600 text-white text-xs">Save</button>
+                    <button onClick={() => setEditingDivisionId(null)} className="px-3 py-2 rounded bg-gray-600 text-white text-xs">Cancel</button>
+                  </>
+                ) : (
+                  <button onClick={() => { setEditingDivisionId(division.id); setEditingDivisionName(division.display_name || division.name); }} className="text-xs text-blue-300 hover:underline">Edit</button>
+                )}
+              </div>
+            ))}
           </div>
         </div>
 

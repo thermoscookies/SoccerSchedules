@@ -375,7 +375,7 @@ export default function EventPage({ params }: { params: Promise<{ id: string }> 
               <div className="flex flex-col sm:flex-row sm:items-center gap-1 sm:gap-2 flex-1 min-w-0">
                 <span className="text-xs sm:text-sm font-medium text-gray-700 whitespace-nowrap">Tournament:</span>
                 <select 
-                  className="px-2 sm:px-3 py-1.5 border border-gray-300 rounded-md text-xs sm:text-sm bg-white min-w-0 flex-1"
+                  className="px-2 sm:px-3 py-1.5 border border-gray-300 rounded-md text-xs sm:text-sm bg-white min-w-[14rem] sm:min-w-[20rem] flex-1"
                   value={combinedView ? 'all' : eventId}
                   onChange={(e) => router.push(e.target.value === 'all' ? `/events/${eventId}?events=all` : `/events/${e.target.value}`)}
                 >
@@ -552,7 +552,7 @@ export default function EventPage({ params }: { params: Promise<{ id: string }> 
                 <option value="">Select division...</option>
                 {schedule.divisions.map((div) => (
                   <option key={div.id} value={div.id}>
-                    {div.name}
+                    {div.display_name || div.name}
                   </option>
                 ))}
               </select>
@@ -710,7 +710,7 @@ export default function EventPage({ params }: { params: Promise<{ id: string }> 
               ) : (
                 displayGames.map((game) => (
                   <tr key={game.id} className="schedule-row">
-                    <td className="schedule-cell px-6 py-4 whitespace-nowrap text-sm">
+                    <td className="schedule-cell px-6 py-4 text-sm break-words">
                       <div>{game.game_date ? new Date(game.game_date).toLocaleDateString('en-US', { month: 'short', day: 'numeric' }) : ''}</div>
                       <div className="text-sm text-gray-500">{game.game_time || 'TBD'}</div>
                     </td>
@@ -744,7 +744,7 @@ export default function EventPage({ params }: { params: Promise<{ id: string }> 
                         {game.field_name || 'TBD'}
                       </button>
                     </td>
-                    <td className="schedule-cell px-6 py-4 whitespace-nowrap text-sm">
+                    <td className="schedule-cell px-6 py-4 text-sm break-words">
                       <button
                         onClick={() => game.division_id && handleDivisionClick(game.division_id)}
                         className="schedule-link text-left"
@@ -753,7 +753,7 @@ export default function EventPage({ params }: { params: Promise<{ id: string }> 
                         {game.division_name}
                       </button>
                     </td>
-                    <td className="schedule-cell px-6 py-4 whitespace-nowrap text-sm">
+                    <td className="schedule-cell px-6 py-4 text-sm break-words">
                       {game.event_name || schedule.event.name}
                     </td>
                     <td className="schedule-cell px-6 py-4 whitespace-nowrap text-sm">
@@ -794,7 +794,7 @@ export default function EventPage({ params }: { params: Promise<{ id: string }> 
                     {game.field_name && (
                       <button
                         onClick={() => game.field_name && handleLocationClick(game.field_name)}
-                        className="text-blue-600 hover:text-blue-800 hover:underline text-left block truncate"
+                        className="text-blue-600 hover:text-blue-800 hover:underline text-left block break-words"
                       >
                         {game.field_name}
                       </button>
@@ -802,7 +802,7 @@ export default function EventPage({ params }: { params: Promise<{ id: string }> 
                     {game.division_name && (
                       <button
                         onClick={() => game.division_id && handleDivisionClick(game.division_id)}
-                        className="text-blue-600 hover:text-blue-800 hover:underline text-left block truncate"
+                        className="text-blue-600 hover:text-blue-800 hover:underline text-left block break-words"
                       >
                         {game.division_name}
                       </button>

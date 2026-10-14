@@ -29,7 +29,8 @@ class Event(Base):
     __tablename__ = "events"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
-    gotsport_event_id: Mapped[str] = mapped_column(String(50), unique=True, index=True)
+    gotsport_event_id: Mapped[str] = mapped_column(String(50), index=True)
+    gotsport_group_id: Mapped[Optional[str]] = mapped_column(String(50), index=True)
     name: Mapped[str] = mapped_column(String(255), nullable=False)
     location: Mapped[Optional[str]] = mapped_column(String(255))
     start_date: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True))
@@ -69,6 +70,8 @@ class Division(Base):
     )
     gotsport_division_id: Mapped[Optional[str]] = mapped_column(String(50), index=True)
     name: Mapped[str] = mapped_column(String(255), nullable=False)
+    # Optional user-facing label; provider name/ID remains in ``name``.
+    display_name: Mapped[Optional[str]] = mapped_column(String(255))
     age_group: Mapped[Optional[str]] = mapped_column(String(50))
     gender: Mapped[Optional[str]] = mapped_column(String(20))
     created_at: Mapped[datetime] = mapped_column(
